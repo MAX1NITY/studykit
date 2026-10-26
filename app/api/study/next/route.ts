@@ -29,23 +29,24 @@ export async function POST(request: Request) {
   if (!kitId) return fail("kitId is required.");
 
   try {
-    const target = await pickDifficulty(supabase, kitId);
-
     const wanted =
       format === "mixed" ? ["choice", "written"] : [format as string];
 
-    // Take from the pool, preferring the question closest to the difficulty
-    // the student has earned, so a queued question still adapts.
-    const { data: pooled } = await supabase
-      .from("attempts")
-      .select(
-        "id, format, question, options, concept, difficulty, created_at",
-      )
-      .eq("kit_id", kitId)
-      .is("score", null)
-      .in("format", wanted)
-      .order("created_at", { ascending: true })
-      .limit(25);
+    // Both reads are independent, so they go together rather than one after
+    // the other: every round trip to the database costs real time.
+    const [target, { data: pooled }] = await Promise.all([
+      pickDifficulty(supabase, kitId),
+      // Take from the pool, preferring the question closest to the difficulty
+      // the student has earned, so a queued question still adapts.
+      supabase
+        .from("attempts")
+        .select("id, format, question, options, concept, difficulty, created_at")
+        .eq("kit_id", kitId)
+        .is("score", null)
+        .in("format", wanted)
+        .order("created_at", { ascending: true })
+        .limit(25),
+    ]);
 
     if (pooled?.length) {
       const best = pooled.reduce((a, b) =>
