@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# generated at prebuild from node_modules
+/public/pdf.worker.min.mjs
+
+# markdown test build output
+/.markdown-test-build
