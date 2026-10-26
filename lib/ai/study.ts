@@ -231,6 +231,116 @@ ${material}`,
   });
 }
 
+/** A multiple-choice question, marked by comparison rather than by the AI. */
+export interface ChoiceQuestion {
+  question: string;
+  options: string[];
+  answer_index: number;
+  explanation: string;
+  concept: string;
+  difficulty: number;
+}
+
+const choiceQuestionSchema: JSONSchema = {
+  type: "object",
+  properties: {
+    question: { type: "string" },
+    options: {
+      type: "array",
+      description: "Exactly four options",
+      items: { type: "string" },
+    },
+    answer_index: {
+      type: "integer",
+      description: "0-based index of the correct option",
+      minimum: 0,
+      maximum: 3,
+    },
+    explanation: {
+      type: "string",
+      description:
+        "Why the right answer is right, addressed to the student as 'you'. One or two sentences.",
+    },
+    concept: { type: "string" },
+    difficulty: { type: "integer", minimum: 1, maximum: 5 },
+  },
+  required: [
+    "question",
+    "options",
+    "answer_index",
+    "explanation",
+    "concept",
+    "difficulty",
+  ],
+};
+
+/**
+ * Asks one multiple-choice question.
+ *
+ * The explanation is written now rather than at marking time, so answering
+ * costs no second call: the result is instant and spends no quota.
+ */
+export async function nextChoiceQuestion(opts: {
+  sources: SourceLike[];
+  targetDifficulty: number;
+  weakConcepts: string[];
+  recentQuestions: string[];
+  rotation: number;
+}): Promise<ChoiceQuestion> {
+  const material = selectMaterial(
+    opts.sources,
+    BUDGETS.question,
+    opts.rotation * BUDGETS.question,
+  );
+
+  const focus = opts.weakConcepts.length
+    ? `Prioritise these concepts, which the student keeps getting wrong: ${opts.weakConcepts.join(", ")}.`
+    : "No weak areas recorded yet, so pick an important concept.";
+
+  const avoid = opts.recentQuestions.length
+    ? `Do not repeat or lightly reword any of these recently asked questions:\n${opts.recentQuestions.map((q) => `- ${q}`).join("\n")}`
+    : "";
+
+  const result = await getProvider().generateJSON<ChoiceQuestion>(
+    choiceQuestionSchema,
+    {
+      system: TUTOR_VOICE,
+      effort: "low",
+      maxOutputTokens: 2048,
+      timeoutMs: 60_000,
+      prompt: `Ask the student ONE multiple-choice question about the material below.
+
+Target difficulty: ${opts.targetDifficulty} out of 5, where 1 is plain recall
+and 5 asks them to apply or compare ideas.
+${focus}
+${avoid}
+
+Rules:
+- Exactly four options.
+- The three wrong options must tempt someone who half-learned the topic:
+  common confusions, near-miss numbers, the right idea applied to the wrong
+  thing. Never "none of the above" or an obviously silly option.
+- Vary which position the correct answer sits in.
+- Answerable from the material alone.
+
+MATERIAL:
+${material}`,
+    },
+  );
+
+  // Guard against a model that ignores the four-option rule.
+  const options = Array.isArray(result.options) ? result.options : [];
+  return {
+    ...result,
+    options,
+    answer_index: Math.min(
+      Math.max(result.answer_index ?? 0, 0),
+      Math.max(options.length - 1, 0),
+    ),
+    difficulty: Math.min(Math.max(result.difficulty ?? 2, 1), 5),
+  };
+}
+
 export interface Grading {
   verdict: "correct" | "partial" | "incorrect";
   score: number;

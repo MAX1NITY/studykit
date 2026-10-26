@@ -1,24 +1,27 @@
 import { getSession } from "@/lib/auth";
 import { fail, failFrom, unauthorized } from "@/lib/api";
-import { nextQuestion } from "@/lib/ai/study";
+import { nextChoiceQuestion, nextQuestion } from "@/lib/ai/study";
 
 // Hobby allows up to 300s with fluid compute; 60 was cutting AI calls off.
 export const maxDuration = 300;
 
+type Format = "written" | "choice" | "mixed";
+
 /**
- * Picks the next Smart Study question.
+ * Picks the next Smart Study question, written or multiple choice.
  *
- * The correct answer is stored server-side on a pending `attempts` row and is
- * never sent to the browser, so the answer cannot be read out of devtools.
+ * For both kinds the answer is stored server-side on a pending `attempts` row
+ * and never sent to the browser, so it cannot be read out of devtools.
  */
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session) return unauthorized();
   const { supabase, user } = session;
 
-  const { kitId } = (await request.json().catch(() => ({}))) as {
-    kitId?: string;
-  };
+  const { kitId, format = "written" } = (await request
+    .json()
+    .catch(() => ({}))) as { kitId?: string; format?: Format };
+
   if (!kitId) return fail("kitId is required.");
 
   try {
@@ -71,37 +74,93 @@ export async function POST(request: Request) {
       .select("id", { count: "exact", head: true })
       .eq("kit_id", kitId);
 
-    const question = await nextQuestion({
+    const rotation = count ?? 0;
+    const asking: Exclude<Format, "mixed"> =
+      format === "mixed"
+        ? rotation % 2 === 0
+          ? "choice"
+          : "written"
+        : format;
+
+    const shared = {
       sources,
       targetDifficulty,
       weakConcepts,
       recentQuestions: (recent ?? []).map((a) => a.question as string),
-      rotation: count ?? 0,
-    });
+      rotation,
+    };
 
-    const { data: attempt, error: attemptError } = await supabase
+    if (asking === "choice") {
+      const q = await nextChoiceQuestion(shared);
+
+      if (q.options.length < 2) {
+        return fail(
+          "The AI did not return usable options.",
+          502,
+          "Try again, or switch to written answers.",
+        );
+      }
+
+      const { data: attempt, error } = await supabase
+        .from("attempts")
+        .insert({
+          kit_id: kitId,
+          user_id: user.id,
+          format: "choice",
+          concept: q.concept,
+          question: q.question,
+          options: q.options,
+          answer_index: q.answer_index,
+          expected: q.options[q.answer_index],
+          explanation: q.explanation,
+          difficulty: q.difficulty,
+        })
+        .select("id")
+        .single();
+
+      if (error || !attempt) {
+        return fail(error?.message ?? "Could not start the question.", 500);
+      }
+
+      // answer_index is deliberately withheld until the student answers.
+      return Response.json({
+        attemptId: attempt.id,
+        format: "choice" as const,
+        question: q.question,
+        options: q.options,
+        concept: q.concept,
+        difficulty: q.difficulty,
+        targeted: weakConcepts.includes(q.concept),
+      });
+    }
+
+    const q = await nextQuestion(shared);
+
+    const { data: attempt, error } = await supabase
       .from("attempts")
       .insert({
         kit_id: kitId,
         user_id: user.id,
-        concept: question.concept,
-        question: question.question,
-        expected: question.expected,
-        difficulty: Math.min(Math.max(question.difficulty, 1), 5),
+        format: "written",
+        concept: q.concept,
+        question: q.question,
+        expected: q.expected,
+        difficulty: Math.min(Math.max(q.difficulty, 1), 5),
       })
       .select("id")
       .single();
 
-    if (attemptError || !attempt) {
-      return fail(attemptError?.message ?? "Could not start the question.", 500);
+    if (error || !attempt) {
+      return fail(error?.message ?? "Could not start the question.", 500);
     }
 
     return Response.json({
       attemptId: attempt.id,
-      question: question.question,
-      concept: question.concept,
-      difficulty: question.difficulty,
-      targeted: weakConcepts.includes(question.concept),
+      format: "written" as const,
+      question: q.question,
+      concept: q.concept,
+      difficulty: q.difficulty,
+      targeted: weakConcepts.includes(q.concept),
     });
   } catch (cause) {
     return failFrom(cause);
