@@ -93,6 +93,23 @@ export function SmartStudy({ kitId }: { kitId: string }) {
 
   const answerBox = useRef<HTMLTextAreaElement>(null);
 
+  /*
+   * The next question, already being written while this one is on screen.
+   *
+   * Generating a question takes most of twenty seconds, which is dead time
+   * between every answer. Starting it as soon as the current question appears
+   * spends that wait while the student is reading and answering, so "Next
+   * question" is usually instant.
+   *
+   * The cost is that the prefetched question is chosen before the current one
+   * is marked, so difficulty adapts one question later than it otherwise
+   * would. Difficulty already moves on a five-question average, so a single
+   * question of lag is a far smaller cost than a wait every time.
+   */
+  const prefetch = useRef<{ format: Format; promise: Promise<Outcome> } | null>(
+    null,
+  );
+
   const apply = useCallback((outcome: Outcome) => {
     if (outcome.error) setError(outcome.error);
     else if (outcome.question) setQuestion(outcome.question);
@@ -116,14 +133,37 @@ export function SmartStudy({ kitId }: { kitId: string }) {
     };
   }, [kitId, apply]);
 
+  // Start writing the next one as soon as this one is on screen.
+  useEffect(() => {
+    if (!question || error) return;
+    prefetch.current = { format, promise: requestQuestion(kitId, format) };
+  }, [question, format, kitId, error]);
+
   /** Moves to the next question. Only ever called from an interaction. */
   const loadQuestion = useCallback(
     async (override?: Format) => {
-      setLoading(true);
+      const asking = override ?? format;
+
+      // A question prefetched for a different format is the wrong shape now.
+      const ready =
+        prefetch.current?.format === asking ? prefetch.current.promise : null;
+      prefetch.current = null;
+
       setError(null);
       setVerdict(null);
       setAnswer("");
-      apply(await requestQuestion(kitId, override ?? format));
+
+      if (ready) {
+        const outcome = await ready;
+        // A background failure should not surface as an error: just ask again.
+        if (outcome.question) {
+          apply(outcome);
+          return;
+        }
+      }
+
+      setLoading(true);
+      apply(await requestQuestion(kitId, asking));
     },
     [apply, format, kitId],
   );
