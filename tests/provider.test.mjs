@@ -176,9 +176,94 @@ await expectError("404", (e) => {
   assert.match(e.hint, /GEMINI_MODEL/);
 });
 
+// A 500 reads as a capacity problem, so it is retryable rather than fatal.
 mode = "500";
-await expectError("500", (e) => assert.equal(e.status, 502));
+await expectError("500", (e) => {
+  assert.equal(e.status, 503);
+  assert.equal(e.retryable, true);
+});
 
+// --- falls back to the next model when one is busy -------------------------
+// Free-tier capacity varies per model, so a busy model must not end the call.
+let served = [];
+
+const busyServer = http.createServer((req, res) => {
+  let body = "";
+  req.on("data", (c) => (body += c));
+  req.on("end", () => {
+    const { model } = JSON.parse(body || "{}");
+    served.push(model);
+    if (model === "busy-model") {
+      res.writeHead(503, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          error: { message: "busy-model is currently experiencing high demand" },
+        }),
+      );
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify({
+        steps: [{ type: "model_output", content: [{ type: "text", text: "OK" }] }],
+      }),
+    );
+  });
+});
+await new Promise((r) => busyServer.listen(0, "127.0.0.1", r));
+const busyPort = busyServer.address().port;
+
+const fallbackSource = source.replace(
+  '"https://generativelanguage.googleapis.com/v1beta/interactions"',
+  `"http://127.0.0.1:${busyPort}/v1beta/interactions"`,
+);
+const fallbackTmp = path.join(here, "../lib/ai/.provider.fallback-test.ts");
+await fs.writeFile(fallbackTmp, fallbackSource);
+
+process.env.GEMINI_MODEL = "busy-model";
+process.env.GEMINI_FALLBACK_MODELS = "spare-model";
+
+const fallbackModule = await import(pathToFileURL(fallbackTmp).href);
+const fallbackProvider = fallbackModule.getProvider();
+
+served = [];
+const text2 = await fallbackProvider.generateText({ prompt: "x" });
+assert.equal(text2, "OK", "should have been served by the spare model");
+assert.deepEqual(
+  served,
+  ["busy-model", "spare-model"],
+  "should try the busy model first, then fall back",
+);
+
+// --- a rejected key must NOT trigger a fallback ---------------------------
+const authServer = http.createServer((req, res) => {
+  res.writeHead(401, { "content-type": "application/json" });
+  res.end(JSON.stringify({ error: { message: "bad key" } }));
+});
+await new Promise((r) => authServer.listen(0, "127.0.0.1", r));
+const authPort = authServer.address().port;
+
+const authTmp = path.join(here, "../lib/ai/.provider.auth-test.ts");
+await fs.writeFile(
+  authTmp,
+  source.replace(
+    '"https://generativelanguage.googleapis.com/v1beta/interactions"',
+    `"http://127.0.0.1:${authPort}/v1beta/interactions"`,
+  ),
+);
+const authModule = await import(pathToFileURL(authTmp).href);
+try {
+  await authModule.getProvider().generateText({ prompt: "x" });
+  assert.fail("a rejected key should throw");
+} catch (err) {
+  assert.equal(err.status, 401);
+  assert.equal(err.retryable, false, "a bad key must not be retried elsewhere");
+}
+
+busyServer.close();
+authServer.close();
 server.close();
 await fs.rm(tmp, { force: true });
+await fs.rm(fallbackTmp, { force: true });
+await fs.rm(authTmp, { force: true });
 console.log("Gemini provider: all assertions passed");

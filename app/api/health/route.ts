@@ -1,15 +1,24 @@
 import { getSession } from "@/lib/auth";
-import { AIError, getProvider } from "@/lib/ai/provider";
+import { getProvider, pingGeminiModel } from "@/lib/ai/provider";
 
-export const maxDuration = 60;
+export const maxDuration = 120;
+
+/** Models worth trying when the configured one is busy. */
+const CANDIDATES = [
+  "gemini-3.5-flash-lite",
+  "gemini-3.6-flash",
+  "gemini-3.1-flash-lite",
+  "gemini-3.8-flash",
+];
 
 /**
- * Reports whether the environment is wired up, and — with ?ping=1 — whether
- * the AI key actually works.
+ * Reports whether the environment is wired up, and — with ?ping=1 — which
+ * Gemini models this key can actually reach.
  *
  * The basic check is public so it still answers when the app is misconfigured
- * and nobody can sign in. The ping costs a real (tiny) API call, so it needs a
- * session: otherwise anyone could burn the key's quota.
+ * and nobody can sign in. The ping spends real (tiny) API calls, so it needs a
+ * session: an unauthenticated endpoint that burns the key's quota is an
+ * invitation.
  */
 export async function GET(request: Request) {
   const session = await getSession();
@@ -17,6 +26,13 @@ export async function GET(request: Request) {
   const provider = (process.env.AI_PROVIDER ?? "gemini").toLowerCase();
   const usingClaude = provider === "anthropic" || provider === "claude";
   const keyName = usingClaude ? "ANTHROPIC_API_KEY" : "GEMINI_API_KEY";
+
+  let chain: string[] = [];
+  try {
+    chain = [getProvider().model];
+  } catch {
+    // No key configured; the report below says so.
+  }
 
   const report: Record<string, unknown> = {
     supabase: {
@@ -26,52 +42,32 @@ export async function GET(request: Request) {
     },
     ai: {
       provider,
-      model: usingClaude
-        ? (process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5")
-        : (process.env.GEMINI_MODEL ?? "gemini-3.8-flash"),
+      model: chain[0] ?? null,
       key_set: Boolean(process.env[keyName]),
       key_name: keyName,
     },
   };
 
-  const wantsPing = new URL(request.url).searchParams.get("ping") === "1";
-
-  if (wantsPing) {
+  if (new URL(request.url).searchParams.get("ping") === "1") {
     if (!session) {
       report.ping = { ran: false, reason: "Sign in first — the ping uses the key." };
       return Response.json(report);
     }
-
-    // Try each level rather than assuming: a model that rejects one setting
-    // is exactly how this check earned its place.
-    const levels = ["minimal", "low", "medium", "high"] as const;
-    const results: Record<string, unknown> = {};
-
-    for (const effort of levels) {
-      const startedAt = Date.now();
-      try {
-        const reply = await getProvider().generateText({
-          prompt: "Reply with exactly: OK",
-          maxOutputTokens: 16,
-          effort,
-          timeoutMs: 30_000,
-        });
-        results[effort] = {
-          ok: true,
-          seconds: Math.round((Date.now() - startedAt) / 100) / 10,
-          reply: reply.slice(0, 20),
-        };
-      } catch (cause) {
-        results[effort] = {
-          ok: false,
-          seconds: Math.round((Date.now() - startedAt) / 100) / 10,
-          error: cause instanceof Error ? cause.message : String(cause),
-          hint: cause instanceof AIError ? cause.hint : undefined,
-        };
-      }
+    if (usingClaude) {
+      report.ping = { ran: false, reason: "Model probing is Gemini-only." };
+      return Response.json(report);
     }
 
-    report.ping = { ran: true, levels: results };
+    const models: Record<string, unknown> = {};
+    for (const model of CANDIDATES) {
+      models[model] = await pingGeminiModel(model);
+    }
+
+    const working = Object.entries(models)
+      .filter(([, r]) => (r as { ok: boolean }).ok)
+      .map(([name]) => name);
+
+    report.ping = { ran: true, working, models };
   }
 
   return Response.json(report);

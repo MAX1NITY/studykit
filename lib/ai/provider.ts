@@ -9,12 +9,15 @@
 export class AIError extends Error {
   readonly status: number;
   readonly hint?: string;
+  /** True when another model might succeed where this one did not. */
+  readonly retryable: boolean;
 
-  constructor(message: string, status = 500, hint?: string) {
+  constructor(message: string, status = 500, hint?: string, retryable = false) {
     super(message);
     this.name = "AIError";
     this.status = status;
     this.hint = hint;
+    this.retryable = retryable;
   }
 }
 
@@ -126,19 +129,52 @@ interface InteractionResponse {
 class GeminiProvider implements AIProvider {
   readonly id = "gemini";
   readonly model: string;
+  /** Tried in order when the one before is unavailable. */
+  private readonly models: string[];
   private readonly apiKey: string;
 
-  constructor(apiKey: string, model: string) {
+  constructor(apiKey: string, models: string[]) {
     this.apiKey = apiKey;
-    this.model = model;
+    this.models = models;
+    this.model = models[0];
   }
 
+  /**
+   * Runs the call against each model in turn.
+   *
+   * Free-tier capacity is not guaranteed: a model can answer in a second one
+   * minute and reply "experiencing high demand" the next. Rather than failing,
+   * move to the next model and tell the logs which one served the request.
+   */
   private async call(
     options: GenerateOptions,
     responseFormat?: Record<string, unknown>,
   ): Promise<string> {
+    let lastError: AIError | null = null;
+
+    for (const model of this.models) {
+      try {
+        return await this.callModel(model, options, responseFormat);
+      } catch (cause) {
+        if (!(cause instanceof AIError) || !cause.retryable) throw cause;
+        console.log(`[ai] ${model} unavailable (${cause.message}); trying the next model`);
+        lastError = cause;
+      }
+    }
+
+    throw (
+      lastError ??
+      new AIError("No Gemini model was available.", 503)
+    );
+  }
+
+  private async callModel(
+    model: string,
+    options: GenerateOptions,
+    responseFormat?: Record<string, unknown>,
+  ): Promise<string> {
     const body: Record<string, unknown> = {
-      model: this.model,
+      model,
       input: options.prompt,
       store: false,
       generation_config: {
@@ -169,9 +205,10 @@ class GeminiProvider implements AIProvider {
       const elapsed = Math.round((Date.now() - startedAt) / 1000);
       if (cause instanceof Error && cause.name === "TimeoutError") {
         throw new AIError(
-          `Gemini did not answer within ${Math.round(timeoutMs / 1000)} seconds.`,
+          `${model} did not answer within ${Math.round(timeoutMs / 1000)} seconds.`,
           504,
-          "Usually means too much material in one go. Try fewer cards, or split the kit.",
+          "Usually means the model is busy, or too much material in one go.",
+          true,
         );
       }
       throw new AIError(
@@ -182,7 +219,7 @@ class GeminiProvider implements AIProvider {
     }
 
     console.log(
-      `[ai] ${this.model} responded ${res.status} in ${Math.round((Date.now() - startedAt) / 1000)}s`,
+      `[ai] ${model} responded ${res.status} in ${Math.round((Date.now() - startedAt) / 1000)}s`,
     );
 
     const payload = (await res.json().catch(() => null)) as
@@ -197,6 +234,7 @@ class GeminiProvider implements AIProvider {
           "Gemini's free-tier rate limit was hit.",
           429,
           "Wait a minute and try again, or set GEMINI_MODEL=gemini-3.5-flash-lite for a higher quota.",
+          true,
         );
       }
       if (res.status === 401 || res.status === 403) {
@@ -208,12 +246,28 @@ class GeminiProvider implements AIProvider {
       }
       if (res.status === 404) {
         throw new AIError(
-          `Gemini has no model named "${this.model}".`,
+          `Gemini has no model named "${model}".`,
           400,
-          "Set GEMINI_MODEL to a current model, for example gemini-3.8-flash.",
+          "Set GEMINI_MODEL to a current model, for example gemini-3.5-flash-lite.",
+          true,
         );
       }
-      throw new AIError(`Gemini request failed: ${detail}`, 502);
+
+      // Capacity problems read as prose rather than a distinct status code,
+      // so match on the message as well as 500/503.
+      const overloaded =
+        res.status === 503 ||
+        res.status === 500 ||
+        /high demand|overloaded|try again later|unavailable/i.test(detail);
+
+      throw new AIError(
+        `Gemini request failed: ${detail}`,
+        overloaded ? 503 : 502,
+        overloaded
+          ? "The model is busy on the free tier. Another was tried."
+          : undefined,
+        overloaded,
+      );
     }
 
     const text = (payload?.steps ?? [])
@@ -318,6 +372,38 @@ class AnthropicProvider implements AIProvider {
   }
 }
 
+/**
+ * Sends a trivial prompt to one named Gemini model.
+ *
+ * Used by the health check to find out which models a key can actually reach,
+ * since free-tier availability differs per model and changes through the day.
+ */
+export async function pingGeminiModel(
+  model: string,
+): Promise<{ ok: boolean; seconds: number; reply?: string; error?: string }> {
+  const key = process.env.GEMINI_API_KEY;
+  const startedAt = Date.now();
+  const seconds = () => Math.round((Date.now() - startedAt) / 100) / 10;
+
+  if (!key) return { ok: false, seconds: 0, error: "GEMINI_API_KEY is not set." };
+
+  try {
+    const reply = await new GeminiProvider(key, [model]).generateText({
+      prompt: "Reply with exactly: OK",
+      maxOutputTokens: 16,
+      effort: "low",
+      timeoutMs: 20_000,
+    });
+    return { ok: true, seconds: seconds(), reply: reply.slice(0, 20) };
+  } catch (cause) {
+    return {
+      ok: false,
+      seconds: seconds(),
+      error: cause instanceof Error ? cause.message : String(cause),
+    };
+  }
+}
+
 // ----------------------------------------------------------------- factory
 
 let cached: AIProvider | null = null;
@@ -352,9 +438,21 @@ export function getProvider(): AIProvider {
     );
   }
 
-  cached = new GeminiProvider(
-    key,
-    process.env.GEMINI_MODEL ?? "gemini-3.8-flash",
+  // Free-tier capacity varies by model and by hour, so keep a chain rather
+  // than a single name. Lite models are built for throughput and tend to be
+  // the ones still answering when the larger Flash models are saturated.
+  const chain = (
+    process.env.GEMINI_MODEL
+      ? [process.env.GEMINI_MODEL]
+      : ["gemini-3.5-flash-lite"]
+  ).concat(
+    (process.env.GEMINI_FALLBACK_MODELS ??
+      "gemini-3.5-flash-lite,gemini-3.6-flash,gemini-3.1-flash-lite")
+      .split(",")
+      .map((m) => m.trim())
+      .filter(Boolean),
   );
+
+  cached = new GeminiProvider(key, [...new Set(chain)]);
   return cached;
 }
