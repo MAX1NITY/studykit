@@ -60,6 +60,8 @@ interface BuildOptions {
   target: number;
   /** Shifts the slice of material used, so parallel builds differ. */
   rotationOffset?: number;
+  /** True when this question is being handed straight to the student. */
+  serve?: boolean;
 }
 
 type BuildResult =
@@ -74,7 +76,7 @@ type BuildResult =
  */
 export async function buildQuestion(
   supabase: SupabaseClient,
-  { kitId, userId, format, target, rotationOffset = 0 }: BuildOptions,
+  { kitId, userId, format, target, rotationOffset = 0, serve = false }: BuildOptions,
 ): Promise<BuildResult> {
   const { data: sources, error: sourcesError } = await supabase
     .from("sources")
@@ -150,6 +152,7 @@ export async function buildQuestion(
         expected: q.options[q.answer_index],
         explanation: q.explanation,
         difficulty: q.difficulty,
+        served_at: serve ? new Date().toISOString() : null,
       })
       .select("id, format, question, options, concept, difficulty")
       .single();
@@ -178,6 +181,7 @@ export async function buildQuestion(
       question: q.question,
       expected: q.expected,
       difficulty: Math.min(Math.max(q.difficulty, 1), 5),
+      served_at: serve ? new Date().toISOString() : null,
     })
     .select("id, format, question, options, concept, difficulty")
     .single();

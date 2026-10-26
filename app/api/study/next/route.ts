@@ -36,25 +36,38 @@ export async function POST(request: Request) {
     // the other: every round trip to the database costs real time.
     const [target, { data: pooled }] = await Promise.all([
       pickDifficulty(supabase, kitId),
-      // Take from the pool, preferring the question closest to the difficulty
-      // the student has earned, so a queued question still adapts.
       supabase
         .from("attempts")
-        .select("id, format, question, options, concept, difficulty, created_at")
+        .select(
+          "id, format, question, options, concept, difficulty, created_at, served_at",
+        )
         .eq("kit_id", kitId)
         .is("score", null)
         .in("format", wanted)
+        .order("served_at", { ascending: true, nullsFirst: true })
         .order("created_at", { ascending: true })
         .limit(25),
     ]);
 
     if (pooled?.length) {
-      const best = pooled.reduce((a, b) =>
+      // Prefer questions never shown. Choosing purely by difficulty is
+      // deterministic, so without this, skipping a question handed the same
+      // one straight back.
+      const unseen = pooled.filter((q) => q.served_at === null);
+      const candidates = unseen.length ? unseen : [pooled[0]];
+
+      const best = candidates.reduce((a, b) =>
         Math.abs((b.difficulty ?? 2) - target) <
         Math.abs((a.difficulty ?? 2) - target)
           ? b
           : a,
       );
+
+      await supabase
+        .from("attempts")
+        .update({ served_at: new Date().toISOString() })
+        .eq("id", best.id);
+
       return Response.json({ ...shapeForClient(best), fromQueue: true });
     }
 
@@ -63,6 +76,7 @@ export async function POST(request: Request) {
       userId: user.id,
       format,
       target,
+      serve: true,
     });
 
     if ("error" in built) return fail(built.error, built.status, built.hint);
