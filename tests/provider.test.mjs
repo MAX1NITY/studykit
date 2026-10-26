@@ -153,8 +153,14 @@ async function expectError(label, test) {
   }
 }
 
+// An empty reply must name the model and what came back, because the usual
+// cause is a too-small token budget spent on thinking rather than a fault.
 mode = "empty";
-await expectError("empty", (e) => assert.match(e.message, /empty response/i));
+await expectError("empty", (e) => {
+  assert.match(e.message, /returned no text/i);
+  assert.match(e.message, /steps:/i);
+  assert.equal(e.retryable, true, "another model is worth trying");
+});
 
 mode = "429";
 await expectError("429", (e) => {

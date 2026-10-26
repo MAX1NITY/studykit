@@ -212,7 +212,8 @@ export async function nextQuestion(opts: {
   return getProvider().generateJSON<SmartQuestion>(questionSchema, {
     system: TUTOR_VOICE,
     effort: "low",
-    maxOutputTokens: 1024,
+    // Room for the model to think before it writes the question.
+    maxOutputTokens: 2048,
     timeoutMs: 60_000,
     prompt: `Ask the student ONE question about the material below.
 
@@ -264,7 +265,7 @@ export async function gradeAnswer(opts: {
   return getProvider().generateJSON<Grading>(gradingSchema, {
     system: TUTOR_VOICE,
     effort: "low",
-    maxOutputTokens: 1024,
+    maxOutputTokens: 2048,
     timeoutMs: 60_000,
     prompt: `Grade the student's answer.
 

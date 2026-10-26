@@ -119,6 +119,7 @@ interface InteractionStep {
 interface InteractionResponse {
   status?: string;
   steps?: InteractionStep[];
+  usage?: { total_tokens?: number; total_output_tokens?: number };
   error?: { message?: string };
 }
 
@@ -178,6 +179,8 @@ class GeminiProvider implements AIProvider {
       input: options.prompt,
       store: false,
       generation_config: {
+        // Thinking tokens come out of this budget too, so a tight limit can
+        // consume the lot and return nothing.
         max_output_tokens: options.maxOutputTokens ?? 4096,
         thinking_level: options.effort ?? "low",
       },
@@ -279,10 +282,18 @@ class GeminiProvider implements AIProvider {
       .trim();
 
     if (!text) {
+      // A thinking model spends part of its output budget before writing any
+      // text, so too small a maxOutputTokens yields a valid response with
+      // nothing in it. Report what came back rather than just "empty".
+      const steps = (payload?.steps ?? []).map((s) => s.type ?? "?").join(", ");
+      const usage = payload?.usage;
       throw new AIError(
-        "Gemini returned an empty response.",
+        `${model} returned no text (steps: ${steps || "none"}).`,
         502,
-        "The material may have been blocked by a safety filter, or the response hit the token limit.",
+        usage
+          ? `Used ${usage.total_output_tokens ?? "?"} of ${options.maxOutputTokens ?? 4096} output tokens. If that is at the limit, the budget was spent on thinking — raise maxOutputTokens.`
+          : "Raise maxOutputTokens, or the material may have hit a safety filter.",
+        true,
       );
     }
 
@@ -390,7 +401,9 @@ export async function pingGeminiModel(
   try {
     const reply = await new GeminiProvider(key, [model]).generateText({
       prompt: "Reply with exactly: OK",
-      maxOutputTokens: 16,
+      // Generous on purpose: thinking is billed against this budget, and a
+      // tight limit makes a working model look broken.
+      maxOutputTokens: 512,
       effort: "low",
       timeoutMs: 20_000,
     });
