@@ -222,9 +222,15 @@ and 5 asks them to apply or compare ideas.
 ${focus}
 ${avoid}
 
+Write it as it would appear on an exam paper. Never refer to "the text",
+"the passage" or "the material": the student is being examined on the
+subject, not on their reading of a page.
+
 The question must be answerable from the material alone, in two or three
 sentences of typing. Do not ask multiple questions at once. Do not include
 the answer in the question.
+
+The concept must name the broader topic being tested, not the answer itself.
 
 MATERIAL:
 ${material}`,
@@ -315,13 +321,27 @@ and 5 asks them to apply or compare ideas.
 ${focus}
 ${avoid}
 
-Rules:
-- Exactly four options.
-- The three wrong options must tempt someone who half-learned the topic:
-  common confusions, near-miss numbers, the right idea applied to the wrong
-  thing. Never "none of the above" or an obviously silly option.
+Rules for the question:
+- Write it as it would appear on a real exam paper. Never refer to "the
+  text", "the passage", "the material" or "the document": the student is
+  being examined on the subject, not on their reading of a page.
+- Do not define the answer inside the question. If the question describes the
+  correct option so exactly that it names itself, rewrite it.
+- Prefer asking what something does, when it is used, or how it differs from
+  its neighbour, over asking what it is called.
+
+Rules for the options:
+- Exactly four.
+- Each wrong option must be a real, named thing from this subject that a
+  student could plausibly confuse with the answer. Never a vague negation
+  ("non-X solutions", "other methods"), never "none of the above", never an
+  option that is obviously filler.
+- Make them tempting to someone who half-learned the topic: the neighbouring
+  concept, the near-miss number, the right idea applied to the wrong thing.
 - Vary which position the correct answer sits in.
-- Answerable from the material alone.
+
+The concept must name the broader topic being tested, not the correct answer.
+Answer from the material alone.
 
 MATERIAL:
 ${material}`,
