@@ -6,18 +6,31 @@ export interface SourceLike {
   content: string;
 }
 
-/** Ceiling on how much material goes into a single AI call. */
-const MATERIAL_BUDGET = 40_000;
+/*
+ * How much material each task sends.
+ *
+ * These are small on purpose. A single Smart Study question does not need
+ * thirty pages of context to be a good question, and sending them made the
+ * call slow enough to be cut off. Each budget is the least that still lets
+ * the task do its job well.
+ */
+const BUDGETS = {
+  question: 8_000,
+  cards: 20_000,
+  test: 20_000,
+  guide: 30_000,
+} as const;
 
 /**
  * Joins the sources into one labelled block, capped at `budget` characters.
  *
- * `offset` rotates the window so that repeated calls over a long document
- * reach the later pages instead of asking about page one forever.
+ * `offset` slides the window through long material, so a session works across
+ * the whole document instead of asking about page one forever. The window is
+ * nudged to the nearest paragraph break to avoid starting mid-sentence.
  */
 export function selectMaterial(
   sources: SourceLike[],
-  budget = MATERIAL_BUDGET,
+  budget: number = BUDGETS.cards,
   offset = 0,
 ): string {
   const joined = sources
@@ -26,12 +39,16 @@ export function selectMaterial(
 
   if (joined.length <= budget) return joined;
 
-  const start = offset % joined.length;
-  const window = joined.slice(start, start + budget);
-  const wrapped =
-    window.length < budget ? window + "\n\n" + joined.slice(0, budget - window.length) : window;
+  const start = offset % Math.max(joined.length - budget, 1);
 
-  return `(excerpt)\n${wrapped}`;
+  // Start at a paragraph break within the next 500 characters, if there is one.
+  const breakAt = joined.indexOf("\n\n", start);
+  const from = breakAt !== -1 && breakAt - start < 500 ? breakAt + 2 : start;
+
+  const part = Math.floor(from / budget) + 1;
+  const parts = Math.ceil(joined.length / budget);
+
+  return `(This is part ${part} of ${parts} of the student's material. Work only from what is here.)\n\n${joined.slice(from, from + budget)}`;
 }
 
 const TUTOR_VOICE = `You are a rigorous, encouraging study coach.
@@ -87,12 +104,13 @@ export async function generateCards(
   sources: SourceLike[],
   cardCount = 16,
 ): Promise<GeneratedCards> {
-  const material = selectMaterial(sources);
+  const material = selectMaterial(sources, BUDGETS.cards);
 
   return getProvider().generateJSON<GeneratedCards>(cardsSchema, {
     system: TUTOR_VOICE,
     effort: "low",
     maxOutputTokens: 8192,
+    timeoutMs: 120_000,
     prompt: `Read the material below and write ${cardCount} flashcards from it.
 
 Rules for cards:
@@ -114,12 +132,13 @@ ${material}`,
 // ---------------------------------------------------------- study guide
 
 export async function generateGuide(sources: SourceLike[]): Promise<string> {
-  const material = selectMaterial(sources);
+  const material = selectMaterial(sources, BUDGETS.guide);
 
   return getProvider().generateText({
     system: TUTOR_VOICE,
-    effort: "medium",
+    effort: "low",
     maxOutputTokens: 8192,
+    timeoutMs: 150_000,
     prompt: `Write a revision guide for the material below, in Markdown.
 
 Structure it as:
@@ -176,7 +195,11 @@ export async function nextQuestion(opts: {
   recentQuestions: string[];
   rotation: number;
 }): Promise<SmartQuestion> {
-  const material = selectMaterial(opts.sources, MATERIAL_BUDGET, opts.rotation * 6000);
+  const material = selectMaterial(
+    opts.sources,
+    BUDGETS.question,
+    opts.rotation * BUDGETS.question,
+  );
 
   const focus = opts.weakConcepts.length
     ? `Prioritise these concepts, which the student has been getting wrong: ${opts.weakConcepts.join(", ")}.`
@@ -190,6 +213,7 @@ export async function nextQuestion(opts: {
     system: TUTOR_VOICE,
     effort: "low",
     maxOutputTokens: 1024,
+    timeoutMs: 60_000,
     prompt: `Ask the student ONE question about the material below.
 
 Target difficulty: ${opts.targetDifficulty} out of 5, where 1 is plain recall
@@ -241,6 +265,7 @@ export async function gradeAnswer(opts: {
     system: TUTOR_VOICE,
     effort: "low",
     maxOutputTokens: 1024,
+    timeoutMs: 60_000,
     prompt: `Grade the student's answer.
 
 QUESTION: ${opts.question}
@@ -302,14 +327,15 @@ export async function generateTest(
   sources: SourceLike[],
   count = 10,
 ): Promise<TestQuestion[]> {
-  const material = selectMaterial(sources);
+  const material = selectMaterial(sources, BUDGETS.test);
 
   const { questions } = await getProvider().generateJSON<{
     questions: TestQuestion[];
   }>(testSchema, {
     system: TUTOR_VOICE,
-    effort: "medium",
+    effort: "low",
     maxOutputTokens: 8192,
+    timeoutMs: 150_000,
     prompt: `Write a ${count}-question multiple-choice practice test on the material below.
 
 Rules:

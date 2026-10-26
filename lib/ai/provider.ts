@@ -24,6 +24,8 @@ export type JSONSchema = Record<string, unknown>;
 export interface GenerateOptions {
   /** The task for this call. */
   prompt: string;
+  /** Give up after this long and report it, rather than hanging. */
+  timeoutMs?: number;
   /** Persistent role/behaviour instruction. */
   system?: string;
   /** Upper bound on response length. */
@@ -148,6 +150,10 @@ class GeminiProvider implements AIProvider {
     if (options.system) body.system_instruction = options.system;
     if (responseFormat) body.response_format = responseFormat;
 
+    const timeoutMs = options.timeoutMs ?? 90_000;
+    const abort = AbortSignal.timeout(timeoutMs);
+    const startedAt = Date.now();
+
     let res: Response;
     try {
       res = await fetch(GEMINI_ENDPOINT, {
@@ -157,14 +163,27 @@ class GeminiProvider implements AIProvider {
           "x-goog-api-key": this.apiKey,
         },
         body: JSON.stringify(body),
+        signal: abort,
       });
     } catch (cause) {
+      const elapsed = Math.round((Date.now() - startedAt) / 1000);
+      if (cause instanceof Error && cause.name === "TimeoutError") {
+        throw new AIError(
+          `Gemini did not answer within ${Math.round(timeoutMs / 1000)} seconds.`,
+          504,
+          "Usually means too much material in one go. Try fewer cards, or split the kit.",
+        );
+      }
       throw new AIError(
-        "Could not reach the Gemini API.",
+        `Could not reach the Gemini API (after ${elapsed}s).`,
         503,
         cause instanceof Error ? cause.message : undefined,
       );
     }
+
+    console.log(
+      `[ai] ${this.model} responded ${res.status} in ${Math.round((Date.now() - startedAt) / 1000)}s`,
+    );
 
     const payload = (await res.json().catch(() => null)) as
       | InteractionResponse

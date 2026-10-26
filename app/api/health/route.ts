@@ -1,16 +1,24 @@
 import { getSession } from "@/lib/auth";
+import { AIError, getProvider } from "@/lib/ai/provider";
 
-/** Quick check that the environment variables are wired up correctly. */
-export async function GET() {
+export const maxDuration = 60;
+
+/**
+ * Reports whether the environment is wired up, and — with ?ping=1 — whether
+ * the AI key actually works.
+ *
+ * The basic check is public so it still answers when the app is misconfigured
+ * and nobody can sign in. The ping costs a real (tiny) API call, so it needs a
+ * session: otherwise anyone could burn the key's quota.
+ */
+export async function GET(request: Request) {
   const session = await getSession();
 
   const provider = (process.env.AI_PROVIDER ?? "gemini").toLowerCase();
-  const keyName =
-    provider === "anthropic" || provider === "claude"
-      ? "ANTHROPIC_API_KEY"
-      : "GEMINI_API_KEY";
+  const usingClaude = provider === "anthropic" || provider === "claude";
+  const keyName = usingClaude ? "ANTHROPIC_API_KEY" : "GEMINI_API_KEY";
 
-  return Response.json({
+  const report: Record<string, unknown> = {
     supabase: {
       url_set: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),
       key_set: Boolean(process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY),
@@ -18,12 +26,46 @@ export async function GET() {
     },
     ai: {
       provider,
-      model:
-        provider === "anthropic" || provider === "claude"
-          ? (process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5")
-          : (process.env.GEMINI_MODEL ?? "gemini-3.8-flash"),
+      model: usingClaude
+        ? (process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5")
+        : (process.env.GEMINI_MODEL ?? "gemini-3.8-flash"),
       key_set: Boolean(process.env[keyName]),
       key_name: keyName,
     },
-  });
+  };
+
+  const wantsPing = new URL(request.url).searchParams.get("ping") === "1";
+
+  if (wantsPing) {
+    if (!session) {
+      report.ping = { ran: false, reason: "Sign in first — the ping uses the key." };
+      return Response.json(report);
+    }
+
+    const startedAt = Date.now();
+    try {
+      const reply = await getProvider().generateText({
+        prompt: "Reply with exactly: OK",
+        maxOutputTokens: 16,
+        effort: "minimal",
+        timeoutMs: 30_000,
+      });
+      report.ping = {
+        ran: true,
+        ok: true,
+        seconds: Math.round((Date.now() - startedAt) / 100) / 10,
+        reply: reply.slice(0, 40),
+      };
+    } catch (cause) {
+      report.ping = {
+        ran: true,
+        ok: false,
+        seconds: Math.round((Date.now() - startedAt) / 100) / 10,
+        error: cause instanceof Error ? cause.message : String(cause),
+        hint: cause instanceof AIError ? cause.hint : undefined,
+      };
+    }
+  }
+
+  return Response.json(report);
 }
