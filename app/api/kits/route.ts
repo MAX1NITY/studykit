@@ -1,6 +1,6 @@
 import { getSession } from "@/lib/auth";
 import { failFrom, fail, unauthorized } from "@/lib/api";
-import { generateKit, generateGuide, type SourceLike } from "@/lib/ai/study";
+import { generateKit, type SourceLike } from "@/lib/ai/study";
 
 export const maxDuration = 60;
 
@@ -89,15 +89,10 @@ export async function POST(request: Request) {
       if (cardsError) return fail(cardsError.message, 500);
     }
 
-    // The guide is a second call, so a failure there must not lose the kit.
-    try {
-      const markdown = await generateGuide(sources);
-      await supabase
-        .from("guides")
-        .insert({ kit_id: kit.id, user_id: user.id, markdown });
-    } catch (guideError) {
-      console.error("guide generation failed", guideError);
-    }
+    // The revision guide is deliberately NOT generated here. Two AI calls in
+    // one request is the longest path in the app and the one most likely to
+    // hit a serverless timeout, which would throw away the kit as well. The
+    // guide is written on demand instead, from the button on the guide page.
 
     return Response.json({
       kit,

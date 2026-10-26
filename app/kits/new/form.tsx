@@ -202,8 +202,9 @@ export function NewKitForm() {
 
       {building ? (
         <p className="read max-w-[56ch] text-[15px] leading-relaxed text-mute">
-          This takes about twenty seconds. It writes the flashcards first, then
-          the revision guide.
+          Reading it through and writing the flashcards takes about twenty
+          seconds. The revision guide is written separately, from the kit, when
+          you want it.
         </p>
       ) : null}
     </div>

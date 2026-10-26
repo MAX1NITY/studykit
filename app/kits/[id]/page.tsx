@@ -78,7 +78,7 @@ export default async function KitPage(props: PageProps<"/kits/[id]">) {
       href: `/kits/${id}/guide`,
       name: "Revision guide",
       blurb: "The material condensed, with the easily-confused pairs called out.",
-      status: kit.guide_count > 0 ? "Ready to read" : "Not generated",
+      status: kit.guide_count > 0 ? "Ready to read" : "Write it",
       tone: kit.guide_count > 0 ? "text-mute" : "text-brass",
     },
   ];
