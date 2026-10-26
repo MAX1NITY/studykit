@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { TopBar } from "@/components/chrome";
+import { DeleteKit } from "./danger";
 import { since } from "@/lib/format";
 
 export default async function KitPage(props: PageProps<"/kits/[id]">) {
@@ -184,6 +185,10 @@ export default async function KitPage(props: PageProps<"/kits/[id]">) {
             </ul>
           </section>
         ) : null}
+
+        <section className="mt-12 border-t border-rule pt-6">
+          <DeleteKit kitId={id} title={kit.title as string} />
+        </section>
       </main>
     </>
   );
