@@ -42,29 +42,36 @@ export async function GET(request: Request) {
       return Response.json(report);
     }
 
-    const startedAt = Date.now();
-    try {
-      const reply = await getProvider().generateText({
-        prompt: "Reply with exactly: OK",
-        maxOutputTokens: 16,
-        effort: "minimal",
-        timeoutMs: 30_000,
-      });
-      report.ping = {
-        ran: true,
-        ok: true,
-        seconds: Math.round((Date.now() - startedAt) / 100) / 10,
-        reply: reply.slice(0, 40),
-      };
-    } catch (cause) {
-      report.ping = {
-        ran: true,
-        ok: false,
-        seconds: Math.round((Date.now() - startedAt) / 100) / 10,
-        error: cause instanceof Error ? cause.message : String(cause),
-        hint: cause instanceof AIError ? cause.hint : undefined,
-      };
+    // Try each level rather than assuming: a model that rejects one setting
+    // is exactly how this check earned its place.
+    const levels = ["minimal", "low", "medium", "high"] as const;
+    const results: Record<string, unknown> = {};
+
+    for (const effort of levels) {
+      const startedAt = Date.now();
+      try {
+        const reply = await getProvider().generateText({
+          prompt: "Reply with exactly: OK",
+          maxOutputTokens: 16,
+          effort,
+          timeoutMs: 30_000,
+        });
+        results[effort] = {
+          ok: true,
+          seconds: Math.round((Date.now() - startedAt) / 100) / 10,
+          reply: reply.slice(0, 20),
+        };
+      } catch (cause) {
+        results[effort] = {
+          ok: false,
+          seconds: Math.round((Date.now() - startedAt) / 100) / 10,
+          error: cause instanceof Error ? cause.message : String(cause),
+          hint: cause instanceof AIError ? cause.hint : undefined,
+        };
+      }
     }
+
+    report.ping = { ran: true, levels: results };
   }
 
   return Response.json(report);
