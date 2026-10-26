@@ -68,6 +68,18 @@ async function requestQuestion(
   return result.ok ? { question: result.data } : { error: result.error };
 }
 
+/** Asks the server to refill the pool. Returns how many are ready, or null. */
+async function requestTopUp(
+  kitId: string,
+  format: Format,
+): Promise<number | null> {
+  const result = await postJSON<{ ready: number }>("/api/study/queue", {
+    kitId,
+    format,
+  });
+  return result.ok ? result.data.ready : null;
+}
+
 /** Remembered per kit, so returning to a kit resumes how you were studying. */
 function storedFormat(kitId: string): Format {
   try {
@@ -93,22 +105,15 @@ export function SmartStudy({ kitId }: { kitId: string }) {
 
   const answerBox = useRef<HTMLTextAreaElement>(null);
 
+  const [ready, setReady] = useState<number | null>(null);
+
   /*
-   * The next question, already being written while this one is on screen.
-   *
-   * Generating a question takes most of twenty seconds, which is dead time
-   * between every answer. Starting it as soon as the current question appears
-   * spends that wait while the student is reading and answering, so "Next
-   * question" is usually instant.
-   *
-   * The cost is that the prefetched question is chosen before the current one
-   * is marked, so difficulty adapts one question later than it otherwise
-   * would. Difficulty already moves on a five-question average, so a single
-   * question of lag is a far smaller cost than a wait every time.
+   * Questions are kept as a pool of unanswered rows in the database, so
+   * taking the next one is a read rather than a twenty-second wait. The pool
+   * refills in the background while studying, and because it lives in the
+   * database it survives between sessions: come back tomorrow and the
+   * questions are already written.
    */
-  const prefetch = useRef<{ format: Format; promise: Promise<Outcome> } | null>(
-    null,
-  );
 
   const apply = useCallback((outcome: Outcome) => {
     if (outcome.error) setError(outcome.error);
@@ -133,37 +138,37 @@ export function SmartStudy({ kitId }: { kitId: string }) {
     };
   }, [kitId, apply]);
 
-  // Start writing the next one as soon as this one is on screen.
+  // Keep the pool filled behind the student, not in front of them. The work
+  // is awaited before any state is touched, so this effect never writes state
+  // synchronously. A failure here stays silent: it is work nobody asked for.
   useEffect(() => {
     if (!question || error) return;
-    prefetch.current = { format, promise: requestQuestion(kitId, format) };
-  }, [question, format, kitId, error]);
+    let cancelled = false;
+
+    requestTopUp(kitId, format).then((count) => {
+      if (!cancelled && count !== null) setReady(count);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [question, format, error, kitId]);
 
   /** Moves to the next question. Only ever called from an interaction. */
   const loadQuestion = useCallback(
     async (override?: Format) => {
       const asking = override ?? format;
 
-      // A question prefetched for a different format is the wrong shape now.
-      const ready =
-        prefetch.current?.format === asking ? prefetch.current.promise : null;
-      prefetch.current = null;
-
       setError(null);
       setVerdict(null);
       setAnswer("");
-
-      if (ready) {
-        const outcome = await ready;
-        // A background failure should not surface as an error: just ask again.
-        if (outcome.question) {
-          apply(outcome);
-          return;
-        }
-      }
-
+      // Always show that something is happening: clearing the verdict without
+      // this left the answered question on screen looking frozen.
       setLoading(true);
-      apply(await requestQuestion(kitId, asking));
+
+      const outcome = await requestQuestion(kitId, asking);
+      apply(outcome);
+      setReady((n) => (n === null ? n : Math.max(n - 1, 0)));
     },
     [apply, format, kitId],
   );
@@ -311,7 +316,13 @@ export function SmartStudy({ kitId }: { kitId: string }) {
           ) : null}
         </div>
 
-        {history.length > 0 ? (
+        <span className="flex items-center gap-3 text-mute">
+          {ready !== null && ready > 0 ? (
+            <span title="Questions already written and waiting">
+              {ready} ready
+            </span>
+          ) : null}
+          {history.length > 0 ? (
           <span className="text-mute">
             {history.length} answered
             {average !== null ? (
@@ -331,7 +342,8 @@ export function SmartStudy({ kitId }: { kitId: string }) {
               </>
             ) : null}
           </span>
-        ) : null}
+          ) : null}
+        </span>
       </div>
 
       {error ? (
