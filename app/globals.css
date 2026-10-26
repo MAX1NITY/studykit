@@ -1,26 +1,178 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/*
+  StudyKit — a recall-practice tool.
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  Two rules hold the whole visual system together:
+  1. The thing being asked is the largest thing on screen. Everything else
+     is status, set small and quiet.
+  2. Colour only ever carries meaning. Green is a correct answer, red is a
+     wrong one, brass is something wanting attention. Nothing is coloured
+     for decoration.
+*/
+
+:root {
+  --slate: #1d2430;
+  --slate-soft: #2b3542;
+  --chalk: #f5f6f4;
+  --page: #ffffff;
+  --rule: #dcdfd9;
+  --mute: #66707e;
+
+  --mark: #b3291f; /* incorrect */
+  --sure: #1f6f52; /* correct */
+  --brass: #a8761f; /* attention, partial, due */
+
+  --ink: var(--slate);
+  --bg: var(--chalk);
+  --surface: var(--page);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --slate: #e8eae6;
+    --slate-soft: #b9bfc8;
+    --chalk: #12171d;
+    --page: #181f27;
+    --rule: #2c343d;
+    --mute: #8b95a1;
+
+    --mark: #f1897f;
+    --sure: #6cc49d;
+    --brass: #d8a94f;
   }
 }
 
+@theme inline {
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--slate-soft);
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-rule: var(--rule);
+  --color-mute: var(--mute);
+  --color-mark: var(--mark);
+  --color-sure: var(--sure);
+  --color-brass: var(--brass);
+
+  --font-sans: var(--font-plex), ui-sans-serif, system-ui, sans-serif;
+  --font-read: var(--font-newsreader), Georgia, serif;
+
+  --radius-sm: 3px;
+  --radius-md: 5px;
+}
+
+* {
+  border-color: var(--rule);
+}
+
+html {
+  background: var(--bg);
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-plex), ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "tnum" 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Questions, answers and guide prose: the reading face. */
+.read {
+  font-family: var(--font-newsreader), Georgia, serif;
+  font-optical-sizing: auto;
+}
+
+/* Visible, unmissable keyboard focus. */
+:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* The answer field: a writing line, not a box inside a box. */
+.writeline {
+  background: transparent;
+  border: 0;
+  border-bottom: 1.5px solid var(--rule);
+  border-radius: 0;
+  resize: none;
+  width: 100%;
+  transition: border-color 140ms ease;
+}
+.writeline:focus {
+  outline: none;
+  border-bottom-color: var(--brass);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Verdict reveal: the one piece of motion, and it answers an action. */
+@keyframes settle {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.settle {
+  animation: settle 220ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+/* Markdown rendered from a study guide. */
+.guide {
+  font-family: var(--font-newsreader), Georgia, serif;
+  line-height: 1.65;
+}
+.guide h2 {
+  font-family: var(--font-plex), sans-serif;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  margin: 2.25rem 0 0.75rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--rule);
+}
+.guide h3 {
+  font-family: var(--font-plex), sans-serif;
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin: 1.5rem 0 0.4rem;
+}
+.guide p {
+  margin: 0.75rem 0;
+  max-width: 68ch;
+}
+.guide ul,
+.guide ol {
+  margin: 0.75rem 0;
+  padding-left: 1.1rem;
+  max-width: 68ch;
+}
+.guide li {
+  margin: 0.3rem 0;
+  list-style: disc;
+}
+.guide ol li {
+  list-style: decimal;
+}
+.guide strong {
+  font-weight: 600;
+}
+.guide code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+  background: var(--bg);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
 }
