@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { extractFile, type Extracted } from "@/lib/extract";
+import { postJSON, type ApiFailure } from "@/lib/fetch-json";
 import { Notice } from "@/components/chrome";
 
 /** Below this, there is not enough material to make decent questions. */
@@ -18,10 +19,10 @@ export function NewKitForm() {
   const [cardCount, setCardCount] = useState(24);
 
   const [reading, setReading] = useState(false);
-  const [building, setBuilding] = useState(false);
-  const [error, setError] = useState<{ title: string; hint?: string } | null>(
-    null,
-  );
+  const [stage, setStage] = useState<"idle" | "saving" | "writing">("idle");
+  const [error, setError] = useState<ApiFailure | null>(null);
+
+  const building = stage !== "idle";
 
   const totalChars =
     pasted.trim().length + files.reduce((n, f) => n + f.content.length, 0);
@@ -49,7 +50,6 @@ export function NewKitForm() {
   }
 
   async function build() {
-    setBuilding(true);
     setError(null);
 
     const sources = [
@@ -59,29 +59,36 @@ export function NewKitForm() {
         : []),
     ];
 
-    try {
-      const res = await fetch("/api/kits", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sources, title: title.trim() || undefined, cardCount }),
-      });
+    // Step one saves the material. It involves no AI, so it is quick and
+    // cannot time out — once this returns, nothing you uploaded can be lost.
+    setStage("saving");
+    const created = await postJSON<{ kit: { id: string } }>("/api/kits", {
+      sources,
+      title: title.trim() || undefined,
+    });
 
-      const payload = await res.json();
-
-      if (!res.ok) {
-        setError({ title: payload.error ?? "Could not build the kit.", hint: payload.hint });
-        setBuilding(false);
-        return;
-      }
-
-      router.replace(`/kits/${payload.kit.id}`);
-    } catch {
-      setError({
-        title: "The request did not go through.",
-        hint: "Check your connection and try again.",
-      });
-      setBuilding(false);
+    if (!created.ok) {
+      setError(created.error);
+      setStage("idle");
+      return;
     }
+
+    const kitId = created.data.kit.id;
+
+    // Step two writes the flashcards. If it fails, the kit still exists and
+    // the kit page offers to write them again, so we go there either way.
+    setStage("writing");
+    const cards = await postJSON(`/api/kits/${kitId}/cards`, {
+      count: cardCount,
+    });
+
+    if (!cards.ok) {
+      const reason = encodeURIComponent(cards.error.title);
+      router.replace(`/kits/${kitId}?cards=failed&why=${reason}`);
+      return;
+    }
+
+    router.replace(`/kits/${kitId}`);
   }
 
   return (
@@ -191,7 +198,11 @@ export function NewKitForm() {
           disabled={!ready}
           className="rounded-sm bg-ink px-5 py-2.5 text-[15px] font-medium text-bg disabled:opacity-40"
         >
-          {building ? "Reading your material…" : "Build the kit"}
+          {stage === "saving"
+            ? "Saving your material…"
+            : stage === "writing"
+              ? "Writing the flashcards…"
+              : "Build the kit"}
         </button>
         <span className="text-[13px] text-mute">
           {totalChars < MIN_CHARS
@@ -200,11 +211,10 @@ export function NewKitForm() {
         </span>
       </div>
 
-      {building ? (
+      {stage === "writing" ? (
         <p className="read max-w-[56ch] text-[15px] leading-relaxed text-mute">
-          Reading it through and writing the flashcards takes about twenty
-          seconds. The revision guide is written separately, from the kit, when
-          you want it.
+          Your material is saved, so nothing can be lost from here. Reading it
+          through and writing the cards usually takes twenty to forty seconds.
         </p>
       ) : null}
     </div>

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Notice } from "@/components/chrome";
+import { postJSON } from "@/lib/fetch-json";
 
 interface Question {
   question: string;
@@ -52,55 +53,43 @@ export function PracticeTest({ kitId }: { kitId: string }) {
     setPhase("building");
     setError(null);
 
-    try {
-      const res = await fetch("/api/test", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ kitId, count }),
-      });
-      const payload = await res.json();
+    const result = await postJSON<{ testId: string; questions: Question[] }>(
+      "/api/test",
+      { kitId, count },
+    );
 
-      if (!res.ok) {
-        setError({ title: payload.error ?? "Could not build a test.", hint: payload.hint });
-        setPhase("setup");
-        return;
-      }
-
-      setTestId(payload.testId);
-      setQuestions(payload.questions);
-      setResponses(new Array(payload.questions.length).fill(null));
-      startedAt.current = Date.now();
-      setPhase("sitting");
-    } catch {
-      setError({ title: "The request did not go through." });
+    if (!result.ok) {
+      setError(result.error);
       setPhase("setup");
+      return;
     }
+
+    setTestId(result.data.testId);
+    setQuestions(result.data.questions);
+    setResponses(new Array(result.data.questions.length).fill(null));
+    startedAt.current = Date.now();
+    setPhase("sitting");
   }
 
   async function submit() {
     if (!testId) return;
     setError(null);
 
-    try {
-      const res = await fetch("/api/test", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ testId, responses, durationSeconds: elapsed }),
-      });
-      const payload = await res.json();
+    const result = await postJSON<{ score: number; results: Result[] }>(
+      "/api/test",
+      { testId, responses, durationSeconds: elapsed },
+      "PUT",
+    );
 
-      if (!res.ok) {
-        setError({ title: payload.error ?? "Could not mark the test.", hint: payload.hint });
-        return;
-      }
-
-      setResults(payload.results);
-      setScore(payload.score);
-      setPhase("marked");
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    } catch {
-      setError({ title: "The request did not go through." });
+    if (!result.ok) {
+      setError(result.error);
+      return;
     }
+
+    setResults(result.data.results);
+    setScore(result.data.score);
+    setPhase("marked");
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   const answered = responses.filter((r) => r !== null).length;

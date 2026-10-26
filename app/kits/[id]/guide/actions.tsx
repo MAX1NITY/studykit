@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Notice } from "@/components/chrome";
+import { postJSON } from "@/lib/fetch-json";
 
 export function GuideActions({
   kitId,
@@ -21,26 +22,16 @@ export function GuideActions({
     setBusy(true);
     setError(null);
 
-    try {
-      const res = await fetch("/api/guide", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ kitId }),
-      });
-      const payload = await res.json();
+    const result = await postJSON("/api/guide", { kitId });
 
-      if (!res.ok) {
-        setError({ title: payload.error ?? "Could not write the guide.", hint: payload.hint });
-        setBusy(false);
-        return;
-      }
-
-      router.refresh();
+    if (!result.ok) {
+      setError(result.error);
       setBusy(false);
-    } catch {
-      setError({ title: "The request did not go through." });
-      setBusy(false);
+      return;
     }
+
+    router.refresh();
+    setBusy(false);
   }
 
   return (

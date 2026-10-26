@@ -1,18 +1,22 @@
 import { getSession } from "@/lib/auth";
-import { failFrom, fail, unauthorized } from "@/lib/api";
-import { generateKit, type SourceLike } from "@/lib/ai/study";
-
-export const maxDuration = 60;
+import { fail, unauthorized } from "@/lib/api";
+import type { SourceLike } from "@/lib/ai/study";
 
 const COLORS = ["indigo", "emerald", "amber", "rose", "sky", "violet"];
 
 interface Body {
   sources?: { name?: string; kind?: string; content?: string }[];
   title?: string;
-  cardCount?: number;
 }
 
-/** Builds a study kit: flashcards and a revision guide from raw material. */
+/**
+ * Creates a kit and stores its material. No AI call happens here on purpose.
+ *
+ * Writing the flashcards is a second request (POST /api/kits/[id]/cards).
+ * Keeping them apart means a slow or failed generation can never destroy the
+ * material you just uploaded: the kit is already saved, and the cards can be
+ * written again from the kit page.
+ */
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session) return unauthorized();
@@ -46,60 +50,45 @@ export async function POST(request: Request) {
     );
   }
 
-  try {
-    const generated = await generateKit(sources, body.cardCount ?? 24);
+  const { data: kit, error: kitError } = await supabase
+    .from("kits")
+    .insert({
+      user_id: user.id,
+      title: (body.title?.trim() || provisionalTitle(sources)).slice(0, 200),
+      color: COLORS[Math.floor(Math.random() * COLORS.length)],
+    })
+    .select("id, title")
+    .single();
 
-    const { data: kit, error: kitError } = await supabase
-      .from("kits")
-      .insert({
-        user_id: user.id,
-        title: (body.title?.trim() || generated.title).slice(0, 200),
-        subject: generated.subject,
-        color: COLORS[Math.floor(Math.random() * COLORS.length)],
-      })
-      .select("id, title, subject, color")
-      .single();
-
-    if (kitError || !kit) {
-      return fail(kitError?.message ?? "Could not save the kit.", 500);
-    }
-
-    const { error: sourcesError } = await supabase.from("sources").insert(
-      sources.map((s, i) => ({
-        kit_id: kit.id,
-        user_id: user.id,
-        name: s.name,
-        kind: (body.sources?.[i]?.kind ?? "text") as string,
-        content: s.content,
-        char_count: s.content.length,
-      })),
-    );
-    if (sourcesError) return fail(sourcesError.message, 500);
-
-    if (generated.cards?.length) {
-      const { error: cardsError } = await supabase.from("cards").insert(
-        generated.cards.slice(0, 120).map((c) => ({
-          kit_id: kit.id,
-          user_id: user.id,
-          front: c.front,
-          back: c.back,
-          concept: c.concept,
-        })),
-      );
-      if (cardsError) return fail(cardsError.message, 500);
-    }
-
-    // The revision guide is deliberately NOT generated here. Two AI calls in
-    // one request is the longest path in the app and the one most likely to
-    // hit a serverless timeout, which would throw away the kit as well. The
-    // guide is written on demand instead, from the button on the guide page.
-
-    return Response.json({
-      kit,
-      card_count: generated.cards?.length ?? 0,
-      concepts: generated.concepts ?? [],
-    });
-  } catch (cause) {
-    return failFrom(cause);
+  if (kitError || !kit) {
+    return fail(kitError?.message ?? "Could not save the kit.", 500);
   }
+
+  const { error: sourcesError } = await supabase.from("sources").insert(
+    sources.map((s, i) => ({
+      kit_id: kit.id,
+      user_id: user.id,
+      name: s.name,
+      kind: (body.sources?.[i]?.kind ?? "text") as string,
+      content: s.content,
+      char_count: s.content.length,
+    })),
+  );
+
+  if (sourcesError) return fail(sourcesError.message, 500);
+
+  return Response.json({ kit });
+}
+
+/**
+ * A readable name to use until the AI suggests a better one: the file's name
+ * without its extension, or the opening words of what was pasted.
+ */
+function provisionalTitle(sources: SourceLike[]): string {
+  const first = sources[0];
+  const fromName = first.name.replace(/\.[a-z0-9]+$/i, "").trim();
+  if (fromName && fromName.toLowerCase() !== "pasted notes") return fromName;
+
+  const opening = first.content.replace(/\s+/g, " ").trim().slice(0, 60);
+  return opening ? `${opening}…` : "Untitled kit";
 }

@@ -3,10 +3,14 @@ import { notFound, redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { TopBar } from "@/components/chrome";
 import { DeleteKit } from "./danger";
+import { GenerateCards } from "./cards-action";
 import { since } from "@/lib/format";
 
 export default async function KitPage(props: PageProps<"/kits/[id]">) {
   const { id } = await props.params;
+  const search = await props.searchParams;
+  const cardsFailed = search?.cards === "failed";
+  const failureReason = typeof search?.why === "string" ? search.why : undefined;
   const session = await getSession();
   if (!session) redirect("/login");
   const { supabase } = session;
@@ -54,10 +58,17 @@ export default async function KitPage(props: PageProps<"/kits/[id]">) {
       name: "Flashcards",
       blurb: "Spaced repetition. Cards you miss come back sooner.",
       status:
-        kit.due_count > 0
-          ? `${kit.due_count} due now`
-          : `${kit.card_count} card${kit.card_count === 1 ? "" : "s"}, none due`,
-      tone: kit.due_count > 0 ? "text-brass" : "text-mute",
+        kit.card_count === 0
+          ? "None yet"
+          : kit.due_count > 0
+            ? `${kit.due_count} due now`
+            : `${kit.card_count} card${kit.card_count === 1 ? "" : "s"}, none due`,
+      tone:
+        kit.card_count === 0
+          ? "text-brass"
+          : kit.due_count > 0
+            ? "text-brass"
+            : "text-mute",
     },
     {
       href: `/kits/${id}/test`,
@@ -125,6 +136,27 @@ export default async function KitPage(props: PageProps<"/kits/[id]">) {
             </li>
           ))}
         </ul>
+
+        {kit.card_count === 0 || cardsFailed ? (
+          <section className="mt-10">
+            <h2 className="text-[14px] font-medium">
+              {kit.card_count === 0
+                ? "This kit has no flashcards yet"
+                : "Flashcards"}
+            </h2>
+            <p className="mt-1 max-w-[58ch] text-[13px] text-mute">
+              Your material is saved and Smart Study works without cards. Write
+              a deck whenever you want one.
+            </p>
+            <div className="mt-4">
+              <GenerateCards
+                kitId={id}
+                hasCards={kit.card_count > 0}
+                initialError={failureReason}
+              />
+            </div>
+          </section>
+        ) : null}
 
         {weak.length > 0 ? (
           <section className="mt-12">

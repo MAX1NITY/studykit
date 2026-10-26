@@ -2,7 +2,8 @@ import { getSession } from "@/lib/auth";
 import { fail, failFrom, unauthorized } from "@/lib/api";
 import { gradeAnswer } from "@/lib/ai/study";
 
-export const maxDuration = 60;
+// Hobby allows up to 300s with fluid compute; 60 was cutting AI calls off.
+export const maxDuration = 300;
 
 /** Grades a typed answer against the expected answer held server-side. */
 export async function POST(request: Request) {

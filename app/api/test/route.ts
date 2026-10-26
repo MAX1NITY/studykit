@@ -2,7 +2,8 @@ import { getSession } from "@/lib/auth";
 import { fail, failFrom, unauthorized } from "@/lib/api";
 import { generateTest, type TestQuestion } from "@/lib/ai/study";
 
-export const maxDuration = 60;
+// Hobby allows up to 300s with fluid compute; 60 was cutting AI calls off.
+export const maxDuration = 300;
 
 /** Creates a practice test. Correct answers stay on the server until marking. */
 export async function POST(request: Request) {

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Notice } from "@/components/chrome";
+import { postJSON } from "@/lib/fetch-json";
 
 interface Question {
   attemptId: string;
@@ -47,31 +48,8 @@ interface Outcome {
  * of state so the mount effect can await it before touching React state.
  */
 async function requestQuestion(kitId: string): Promise<Outcome> {
-  try {
-    const res = await fetch("/api/study/next", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kitId }),
-    });
-    const payload = await res.json();
-
-    if (!res.ok) {
-      return {
-        error: {
-          title: payload.error ?? "Could not get a question.",
-          hint: payload.hint,
-        },
-      };
-    }
-    return { question: payload as Question };
-  } catch {
-    return {
-      error: {
-        title: "The request did not go through.",
-        hint: "Check your connection and try again.",
-      },
-    };
-  }
+  const result = await postJSON<Question>("/api/study/next", { kitId });
+  return result.ok ? { question: result.data } : { error: result.error };
 }
 
 export function SmartStudy({ kitId }: { kitId: string }) {
@@ -125,25 +103,19 @@ export function SmartStudy({ kitId }: { kitId: string }) {
     setMarking(true);
     setError(null);
 
-    try {
-      const res = await fetch("/api/study/grade", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ attemptId: question.attemptId, answer }),
-      });
-      const payload = await res.json();
+    const result = await postJSON<Verdict>("/api/study/grade", {
+      attemptId: question.attemptId,
+      answer,
+    });
 
-      if (!res.ok) {
-        setError({ title: payload.error ?? "Could not mark that.", hint: payload.hint });
-      } else {
-        setVerdict(payload as Verdict);
-        setHistory((h) => [...h, payload.score as number]);
-      }
-    } catch {
-      setError({ title: "The request did not go through." });
-    } finally {
-      setMarking(false);
+    if (!result.ok) {
+      setError(result.error);
+    } else {
+      setVerdict(result.data);
+      setHistory((h) => [...h, result.data.score]);
     }
+
+    setMarking(false);
   }, [answer, marking, question]);
 
   // Cmd/Ctrl + Enter submits; Enter alone moves on once marked.

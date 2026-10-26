@@ -41,14 +41,14 @@ You never pad answers with filler.`;
 
 // ------------------------------------------------------- kit construction
 
-export interface GeneratedKit {
+export interface GeneratedCards {
   title: string;
   subject: string;
   concepts: string[];
   cards: { front: string; back: string; concept: string }[];
 }
 
-const kitSchema: JSONSchema = {
+const cardsSchema: JSONSchema = {
   type: "object",
   properties: {
     title: { type: "string", description: "Short title for this study kit" },
@@ -77,19 +77,25 @@ const kitSchema: JSONSchema = {
   required: ["title", "subject", "concepts", "cards"],
 };
 
-export async function generateKit(
+/**
+ * Reads the material and writes the flashcards.
+ *
+ * Runs at low thinking effort deliberately: writing recall cards is extraction
+ * rather than reasoning, and the extra deliberation mostly bought latency.
+ */
+export async function generateCards(
   sources: SourceLike[],
-  cardCount = 24,
-): Promise<GeneratedKit> {
+  cardCount = 16,
+): Promise<GeneratedCards> {
   const material = selectMaterial(sources);
 
-  return getProvider().generateJSON<GeneratedKit>(kitSchema, {
+  return getProvider().generateJSON<GeneratedCards>(cardsSchema, {
     system: TUTOR_VOICE,
-    effort: "medium",
+    effort: "low",
     maxOutputTokens: 8192,
-    prompt: `Build a study kit from the material below.
+    prompt: `Read the material below and write ${cardCount} flashcards from it.
 
-Produce about ${cardCount} flashcards. Rules for cards:
+Rules for cards:
 - One fact per card. Never bundle two ideas onto one card.
 - The front is a real question or a term, not "Card 3".
 - The back is the answer only: no restating the question.

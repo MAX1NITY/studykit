@@ -2,7 +2,8 @@ import { getSession } from "@/lib/auth";
 import { fail, failFrom, unauthorized } from "@/lib/api";
 import { nextQuestion } from "@/lib/ai/study";
 
-export const maxDuration = 60;
+// Hobby allows up to 300s with fluid compute; 60 was cutting AI calls off.
+export const maxDuration = 300;
 
 /**
  * Picks the next Smart Study question.
