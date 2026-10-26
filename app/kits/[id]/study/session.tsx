@@ -234,21 +234,32 @@ export function SmartStudy({ kitId }: { kitId: string }) {
             {question.question}
           </h1>
 
-          <div className="mt-9">
-            <label htmlFor="answer" className="sr-only">
-              Your answer
-            </label>
-            <textarea
-              id="answer"
-              ref={answerBox}
-              value={answer}
-              onChange={(e) => setAnswer(e.target.value)}
-              disabled={Boolean(verdict) || marking}
-              rows={4}
-              placeholder="Answer in your own words."
-              className="writeline read py-2 text-[17px] leading-relaxed placeholder:font-sans placeholder:text-[15px] placeholder:text-mute/60 disabled:opacity-70"
-            />
-          </div>
+          {/* Once marked, the answer collapses to what was written: a tall
+              empty box under the verdict is just dead space. */}
+          {verdict ? (
+            <div className="mt-8 border-b border-rule pb-4">
+              <p className="text-[13px] text-mute">Your answer</p>
+              <p className="read mt-1.5 max-w-[60ch] text-[17px] leading-relaxed">
+                {answer}
+              </p>
+            </div>
+          ) : (
+            <div className="mt-9">
+              <label htmlFor="answer" className="sr-only">
+                Your answer
+              </label>
+              <textarea
+                id="answer"
+                ref={answerBox}
+                value={answer}
+                onChange={(e) => setAnswer(e.target.value)}
+                disabled={marking}
+                rows={4}
+                placeholder="Answer in your own words."
+                className="writeline read py-2 text-[17px] leading-relaxed placeholder:font-sans placeholder:text-[15px] placeholder:text-mute/60 disabled:opacity-70"
+              />
+            </div>
+          )}
 
           {!verdict ? (
             <div className="mt-5 flex flex-wrap items-center gap-4">
@@ -291,10 +302,16 @@ export function SmartStudy({ kitId }: { kitId: string }) {
               {verdict.missed.length > 0 ? (
                 <div className="mt-4">
                   <p className="text-[13px] text-mute">You left out</p>
-                  <ul className="mt-1.5 space-y-1">
+                  <ul className="mt-1.5 space-y-1.5">
                     {verdict.missed.map((item, i) => (
-                      <li key={i} className="read text-[15px] leading-relaxed">
-                        {item}
+                      <li
+                        key={i}
+                        className="read flex max-w-[58ch] gap-2 text-[15px] leading-relaxed"
+                      >
+                        <span aria-hidden className="select-none text-mute">
+                          &mdash;
+                        </span>
+                        <span>{item}</span>
                       </li>
                     ))}
                   </ul>

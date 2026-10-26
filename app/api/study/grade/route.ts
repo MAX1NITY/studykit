@@ -27,7 +27,9 @@ export async function POST(request: Request) {
       .single();
 
     if (error || !attempt) return fail("That question was not found.", 404);
-    if (attempt.score !== null) {
+    // Loose comparison on purpose: an unanswered attempt reads as null from
+    // Postgres, but as undefined if the column is ever absent from the row.
+    if (attempt.score !== null && attempt.score !== undefined) {
       return fail("That question has already been answered.", 409);
     }
 

@@ -90,8 +90,15 @@ function parseJSON<T>(raw: string): T {
 
 // ------------------------------------------------------------------ Gemini
 
-const GEMINI_ENDPOINT =
+const GEMINI_DEFAULT_ENDPOINT =
   "https://generativelanguage.googleapis.com/v1beta/interactions";
+
+/**
+ * Overridable so the provider can be pointed at a stand-in during testing,
+ * or at a regional or proxied endpoint. Unset in normal use.
+ */
+const GEMINI_ENDPOINT =
+  process.env.GEMINI_BASE_URL?.trim() || GEMINI_DEFAULT_ENDPOINT;
 
 /** One text block inside a step's content array. */
 interface InteractionContent {
