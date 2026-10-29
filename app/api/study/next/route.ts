@@ -3,7 +3,7 @@ import { fail, failFrom, unauthorized } from "@/lib/api";
 import {
   buildQuestion,
   pickDifficulty,
-  shapeForClient,
+  takeFromPool,
   type Format,
 } from "@/lib/study-queue";
 
@@ -29,47 +29,10 @@ export async function POST(request: Request) {
   if (!kitId) return fail("kitId is required.");
 
   try {
-    const wanted =
-      format === "mixed" ? ["choice", "written"] : [format as string];
+    const pooled = await takeFromPool(supabase, { kitId, format });
+    if (pooled) return Response.json({ ...pooled, fromQueue: true });
 
-    // Both reads are independent, so they go together rather than one after
-    // the other: every round trip to the database costs real time.
-    const [target, { data: pooled }] = await Promise.all([
-      pickDifficulty(supabase, kitId),
-      supabase
-        .from("attempts")
-        .select(
-          "id, format, question, options, concept, difficulty, created_at, served_at",
-        )
-        .eq("kit_id", kitId)
-        .is("score", null)
-        .in("format", wanted)
-        .order("served_at", { ascending: true, nullsFirst: true })
-        .order("created_at", { ascending: true })
-        .limit(25),
-    ]);
-
-    if (pooled?.length) {
-      // Prefer questions never shown. Choosing purely by difficulty is
-      // deterministic, so without this, skipping a question handed the same
-      // one straight back.
-      const unseen = pooled.filter((q) => q.served_at === null);
-      const candidates = unseen.length ? unseen : [pooled[0]];
-
-      const best = candidates.reduce((a, b) =>
-        Math.abs((b.difficulty ?? 2) - target) <
-        Math.abs((a.difficulty ?? 2) - target)
-          ? b
-          : a,
-      );
-
-      await supabase
-        .from("attempts")
-        .update({ served_at: new Date().toISOString() })
-        .eq("id", best.id);
-
-      return Response.json({ ...shapeForClient(best), fromQueue: true });
-    }
+    const target = await pickDifficulty(supabase, kitId);
 
     const built = await buildQuestion(supabase, {
       kitId,

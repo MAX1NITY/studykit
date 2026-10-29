@@ -1,6 +1,11 @@
 import { getSession } from "@/lib/auth";
 import { fail, failFrom, unauthorized } from "@/lib/api";
-import { buildQuestion, pickDifficulty, type Format } from "@/lib/study-queue";
+import {
+  buildQuestion,
+  pickDifficulty,
+  readQuestionContext,
+  type Format,
+} from "@/lib/study-queue";
 
 export const maxDuration = 300;
 
@@ -45,7 +50,17 @@ export async function POST(request: Request) {
       return Response.json({ ready, added: 0, full: true });
     }
 
-    const target = await pickDifficulty(supabase, kitId);
+    // The difficulty and the kit context are the same for every question in
+    // this batch, so they are read once, together, instead of once per
+    // question in sequence.
+    const [target, context] = await Promise.all([
+      pickDifficulty(supabase, kitId),
+      readQuestionContext(supabase, kitId),
+    ]);
+
+    if ("error" in context) {
+      return fail(context.error, context.status);
+    }
 
     // Written in parallel. Sequentially, a refill of three took three times
     // as long as one question, which a student answering briskly outruns.
@@ -59,6 +74,7 @@ export async function POST(request: Request) {
           format,
           target,
           rotationOffset: i,
+          context,
         }),
       ),
     );

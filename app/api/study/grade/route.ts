@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import { getSession } from "@/lib/auth";
 import { fail, failFrom, unauthorized } from "@/lib/api";
 import { gradeAnswer } from "@/lib/ai/study";
@@ -58,16 +59,30 @@ export async function POST(request: Request) {
       const correct = choiceIndex === attempt.answer_index;
       const score = correct ? 100 : 0;
 
-      const { error: updateError } = await supabase
-        .from("attempts")
-        .update({
-          user_answer: options[choiceIndex],
-          verdict: correct ? "correct" : "incorrect",
-          score,
-        })
-        .eq("id", attemptId);
+      /*
+       * The verdict is already known from the row just read, so recording it
+       * happens after the reply goes out.
+       *
+       * Marking a chosen option needs no AI at all, which meant the whole of
+       * the student's wait was round trips: read, write, then reply. This
+       * removes the write from that path.
+       */
+      const recorded = (async () => {
+        await supabase
+          .from("attempts")
+          .update({
+            user_answer: options[choiceIndex],
+            verdict: correct ? "correct" : "incorrect",
+            score,
+          })
+          .eq("id", attemptId);
+      })();
 
-      if (updateError) return fail(updateError.message, 500);
+      try {
+        after(recorded);
+      } catch {
+        await recorded;
+      }
 
       return Response.json({
         format: "choice" as const,

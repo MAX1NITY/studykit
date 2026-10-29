@@ -26,7 +26,7 @@ export default async function TestPage(props: PageProps<"/kits/[id]/test">) {
           </Link>
         }
         action={
-          <Link href={`/kits/${id}`} className="text-[13px] text-mute hover:text-ink">
+          <Link href={`/kits/${id}`} className="flex min-h-[44px] shrink-0 items-center px-1 text-[13px] text-mute hover:text-ink">
             Leave
           </Link>
         }

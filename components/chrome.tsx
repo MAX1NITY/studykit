@@ -12,9 +12,13 @@ export function TopBar({
   return (
     <header className="border-b border-rule">
       <div className="mx-auto flex h-14 max-w-5xl items-center gap-3 px-4 sm:px-6">
+        {/* No prefetch: this link sits on every page, including /kits
+            itself, and each prefetch is a full dynamic render of a page the
+            student is usually not going to. */}
         <Link
           href="/kits"
-          className="shrink-0 text-[15px] font-semibold tracking-tight"
+          prefetch={false}
+          className="-ml-1 flex min-h-[44px] shrink-0 items-center px-1 text-[15px] font-semibold tracking-tight"
         >
           StudyKit
         </Link>

@@ -21,11 +21,13 @@
 
   --mark: #b3291f; /* incorrect */
   --sure: #1f6f52; /* correct */
-  --brass: #a8761f; /* attention, partial, due */
+  --brass: #8a5e14; /* attention, partial, due — 5.25:1 on --chalk; was 3.67:1 */
 
   --ink: var(--slate);
   --bg: var(--chalk);
   --surface: var(--page);
+
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -40,6 +42,10 @@
     --mark: #f1897f;
     --sure: #6cc49d;
     --brass: #d8a94f;
+
+    /* Radios, checkboxes and range tracks are drawn by the browser; without
+       this it draws them for a light page on top of a dark one. */
+    color-scheme: dark;
   }
 }
 
@@ -175,4 +181,80 @@ body {
   background: var(--bg);
   padding: 0.1em 0.3em;
   border-radius: 3px;
+}
+
+/* ------------------------------------------------- guide block elements */
+
+.guide hr {
+  margin: 2rem 0;
+  border: 0;
+  border-top: 1px solid var(--rule);
+}
+
+.guide blockquote {
+  margin: 1rem 0;
+  padding: 0.1rem 0 0.1rem 1rem;
+  border-left: 2px solid var(--brass);
+  color: var(--mute);
+  max-width: 68ch;
+}
+
+.guide pre {
+  margin: 1rem 0;
+  padding: 0.8rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+}
+.guide pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+
+/* Nested bullets need a different marker, or a sub-point reads as a sibling. */
+.guide li > ul,
+.guide li > ol {
+  margin: 0.3rem 0 0.3rem 0;
+}
+.guide li li {
+  list-style: circle;
+}
+.guide ol li li {
+  list-style: lower-alpha;
+}
+
+/* Tables: comparison grids are how a guide earns its keep, so they get to
+   scroll sideways on a phone rather than being squeezed unreadable. */
+.guide table {
+  display: block;
+  overflow-x: auto;
+  width: 100%;
+  margin: 1.25rem 0;
+  border-collapse: collapse;
+  font-family: var(--font-plex), sans-serif;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.guide th,
+.guide td {
+  border: 1px solid var(--rule);
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+  vertical-align: top;
+}
+.guide th {
+  font-weight: 600;
+  background: var(--surface);
+  white-space: nowrap;
+}
+
+/* Inline code sat on var(--bg) — the page colour — so it had no background
+   at all. The surface tone is what actually distinguishes it. */
+.guide code {
+  background: var(--surface);
+  border: 1px solid var(--rule);
 }

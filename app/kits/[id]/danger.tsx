@@ -2,13 +2,13 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import { Notice } from "@/components/chrome";
+import { postJSON } from "@/lib/fetch-json";
 
 /**
  * Deleting a kit takes its material, cards, attempts and tests with it, so
- * it asks once before doing it. The row-level-security policy means the
- * delete can only ever reach the signed-in user's own rows.
+ * it asks once before doing it. The delete itself runs on the server, which
+ * keeps the Supabase browser client — and its 236KB — off this page.
  */
 export function DeleteKit({ kitId, title }: { kitId: string; title: string }) {
   const router = useRouter();
@@ -20,14 +20,10 @@ export function DeleteKit({ kitId, title }: { kitId: string; title: string }) {
     setBusy(true);
     setError(null);
 
-    const supabase = createClient();
-    const { error: deleteError } = await supabase
-      .from("kits")
-      .delete()
-      .eq("id", kitId);
+    const result = await postJSON(`/api/kits/${kitId}`, {}, "DELETE");
 
-    if (deleteError) {
-      setError(deleteError.message);
+    if (!result.ok) {
+      setError(result.error.title);
       setBusy(false);
       return;
     }
@@ -40,7 +36,7 @@ export function DeleteKit({ kitId, title }: { kitId: string; title: string }) {
     return (
       <button
         onClick={() => setConfirming(true)}
-        className="text-[13px] text-mute underline underline-offset-2 hover:text-mark"
+        className="min-h-[40px] px-1 text-[13px] text-mute underline underline-offset-2 hover:text-mark"
       >
         Delete this kit
       </button>
@@ -67,14 +63,14 @@ export function DeleteKit({ kitId, title }: { kitId: string; title: string }) {
         <button
           onClick={() => void remove()}
           disabled={busy}
-          className="rounded-sm bg-mark px-3.5 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
+          className="min-h-[40px] rounded-sm bg-mark px-3.5 py-1.5 text-[13px] font-medium text-white disabled:opacity-50"
         >
           {busy ? "Deleting…" : "Yes, delete it"}
         </button>
         <button
           onClick={() => setConfirming(false)}
           disabled={busy}
-          className="text-[13px] text-mute underline underline-offset-2 hover:text-ink"
+          className="min-h-[40px] px-1 text-[13px] text-mute underline underline-offset-2 hover:text-ink"
         >
           Keep it
         </button>

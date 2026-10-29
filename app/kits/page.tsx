@@ -37,7 +37,7 @@ export default async function KitsPage() {
         breadcrumb={session.user.email}
         action={
           <form action="/auth/signout" method="post">
-            <button className="text-[13px] text-mute hover:text-ink">
+            <button className="flex min-h-[44px] shrink-0 items-center px-1 text-[13px] text-mute hover:text-ink">
               Sign out
             </button>
           </form>
