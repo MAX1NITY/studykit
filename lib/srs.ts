@@ -17,6 +17,13 @@ const QUALITY: Record<Grade, number> = {
 
 export const MIN_EASE = 1.3;
 
+/** How long a failed card waits before it is due again. */
+export const RELEARN_MINUTES = 10;
+
+/** A recalled-with-effort card advances a little; an easy one advances more. */
+const HARD_FACTOR = 1.2;
+const EASY_BONUS = 1.3;
+
 export interface CardSchedule {
   ease: number;
   interval_days: number;
@@ -47,27 +54,37 @@ export function review(
     // Lapse: relearn from the start, due again in ten minutes.
     repetitions = 0;
     lapses += 1;
-    interval = 0;
     return {
-      ease,
+      ease: Math.round(ease * 1000) / 1000,
       interval_days: 0,
       repetitions,
       lapses,
-      due_at: new Date(now.getTime() + 10 * 60_000).toISOString(),
+      due_at: new Date(now.getTime() + RELEARN_MINUTES * 60_000).toISOString(),
       last_reviewed_at: now.toISOString(),
     };
   }
 
+  /*
+   * The step each button earns.
+   *
+   * Plain SM-2 sets the first two intervals to 1 and 6 days whatever the
+   * grade, which makes Hard, Good and Easy schedule a brand-new card
+   * identically — three buttons, one outcome, and no reason to think about
+   * which to press. These are Anki's graduating and bonus factors instead,
+   * so every button means something different from the first review on.
+   */
   if (repetitions === 0) {
-    interval = 1;
+    interval = grade === "hard" ? 0.5 : grade === "easy" ? 4 : 1;
   } else if (repetitions === 1) {
-    interval = 6;
+    interval = grade === "hard" ? 3 : grade === "easy" ? 8 : 6;
+  } else if (grade === "hard") {
+    // Recalled, but with effort: a short step up, not a step back. Ease has
+    // already been reduced above, so no second penalty is applied here.
+    interval = interval * HARD_FACTOR;
   } else {
     interval = interval * ease;
+    if (grade === "easy") interval = interval * EASY_BONUS;
   }
-
-  // "Hard" earns a shorter step than the ease alone would give.
-  if (grade === "hard") interval = Math.max(1, interval * 0.6);
 
   repetitions += 1;
   interval = Math.round(interval * 100) / 100;

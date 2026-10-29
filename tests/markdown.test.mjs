@@ -86,3 +86,90 @@ assert.doesNotThrow(() => render("\n\n\n"));
 
 fs.rmSync(out, { recursive: true, force: true });
 console.log("Markdown renderer: all assertions passed");
+
+// ---------------------------------------------------------------------------
+// What a model actually writes in a study guide.
+//
+// These all used to come out wrong: sub-bullets were flattened into their
+// parent list, a table became one run-on paragraph, and ---, > and ``` were
+// printed as literal characters. None of it showed up in testing because the
+// seeded sample guides happened to avoid every one of them.
+// ---------------------------------------------------------------------------
+
+// Nested bullets keep their hierarchy.
+{
+  const html = render(`- Storage
+  - HDD
+  - SSD
+- Memory`);
+  assert.match(html, /<ul>.*<li>Storage<ul>/s, `nested list was flattened: ${html}`);
+  assert.match(html, /<li>HDD<\/li><li>SSD<\/li>/s);
+  assert.match(html, /<li>Memory<\/li>/);
+}
+
+// A table renders as a table.
+{
+  const html = render(`| Scheme | Max |
+| --- | --- |
+| MBR | 2TB |
+| GPT | 9ZB |`);
+  assert.match(html, /<table>/);
+  assert.match(html, /<th>Scheme<\/th><th>Max<\/th>/);
+  assert.match(html, /<td>MBR<\/td><td>2TB<\/td>/);
+  assert.match(html, /<td>GPT<\/td><td>9ZB<\/td>/);
+  assert.ok(!html.includes("| ---"), "table rule leaked into the output");
+}
+
+// A horizontal rule is a rule, not the characters.
+{
+  const html = render("Before\n\n---\n\nAfter");
+  assert.match(html, /<hr\s*\/?>/);
+  assert.ok(!/<p>---<\/p>/.test(html), "--- rendered as a paragraph");
+}
+
+// Blockquotes and fenced code use their own elements.
+{
+  assert.match(render("> Remember this"), /<blockquote>Remember this<\/blockquote>/);
+  const fenced = render("```\nipconfig /all\n```");
+  assert.match(fenced, /<pre><code>ipconfig \/all<\/code><\/pre>/);
+  assert.ok(!fenced.includes("```"), "code fence markers leaked");
+}
+
+// A wrapped bullet stays one bullet instead of splitting the list in two.
+{
+  const html = render(`- A long point that carries on
+  onto a second line
+- The next point`);
+  const items = html.match(/<li>/g) ?? [];
+  assert.equal(items.length, 2, `wrapped bullet split the list: ${html}`);
+  assert.match(html, /carries on onto a second line/);
+  assert.equal((html.match(/<ul>/g) ?? []).length, 1, "list was split in two");
+}
+
+// Emphasis: triple asterisks, and arithmetic that must not become italics.
+{
+  const html = render("***critical*** and 2 * 3 and 4 * 5");
+  assert.match(html, /<strong><em>critical<\/em><\/strong>/);
+  assert.ok(!html.includes("<em> 3 and 4 </em>"), `stray italics: ${html}`);
+  assert.match(html, /2 \* 3 and 4 \* 5/);
+}
+
+// Links become anchors; anything that is not an ordinary web link does not.
+{
+  const html = render("See [the docs](https://example.com/a) now");
+  assert.match(html, /<a href="https:\/\/example\.com\/a"[^>]*>the docs<\/a>/);
+  assert.ok(!html.includes("](") , "link syntax leaked into the output");
+
+  const unsafe = render("[click](javascript:alert(1))");
+  assert.ok(!unsafe.includes("javascript:"), `unsafe href rendered: ${unsafe}`);
+  assert.match(unsafe, /click/);
+}
+
+// Ordered steps still work, and a numbered list is not merged with bullets.
+{
+  const html = render("1. First\n2. Second\n\n- Bullet");
+  assert.match(html, /<ol><li>First<\/li><li>Second<\/li><\/ol>/);
+  assert.match(html, /<ul><li>Bullet<\/li><\/ul>/);
+}
+
+console.log("Markdown guide formatting: all assertions passed");

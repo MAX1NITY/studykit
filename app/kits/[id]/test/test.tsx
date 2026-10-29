@@ -36,7 +36,14 @@ export function PracticeTest({ kitId }: { kitId: string }) {
     null,
   );
 
+  const [marking, setMarking] = useState(false);
+
   const startedAt = useRef<number | null>(null);
+  // One paper at a time. Racing "Start the test" used to create several
+  // papers and leave testId pointing at a different one from the questions
+  // on screen, so answers could be marked against the wrong paper.
+  const buildingRef = useRef(false);
+  const markingRef = useRef(false);
 
   // A clock, because sitting a paper to time is the point of a practice test.
   useEffect(() => {
@@ -49,7 +56,49 @@ export function PracticeTest({ kitId }: { kitId: string }) {
     return () => clearInterval(timer);
   }, [phase]);
 
+  /*
+   * An unfinished paper survives leaving the page.
+   *
+   * Reloading, pressing Back or clicking "Leave" used to drop the student
+   * straight back to the setup screen with their answers and their clock
+   * gone, while the row sat unsubmitted in the database forever. The paper
+   * itself is already stored server-side, so keeping the answers here is
+   * enough to pick it up where it was left.
+   */
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      const saved = await readSaved(kitId);
+      if (cancelled || !saved) return;
+
+      setTestId(saved.testId);
+      setQuestions(saved.questions);
+      setResponses(saved.responses);
+      startedAt.current = saved.startedAt;
+      setElapsed(Math.floor((Date.now() - saved.startedAt) / 1000));
+      setPhase("sitting");
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [kitId]);
+
+  // Keep the saved copy in step with what is on screen.
+  useEffect(() => {
+    if (phase !== "sitting" || !testId || !startedAt.current) return;
+    writeSaved(kitId, {
+      testId,
+      questions,
+      responses,
+      startedAt: startedAt.current,
+    });
+  }, [kitId, phase, testId, questions, responses]);
+
   async function build() {
+    if (buildingRef.current) return;
+    buildingRef.current = true;
     setPhase("building");
     setError(null);
 
@@ -57,6 +106,8 @@ export function PracticeTest({ kitId }: { kitId: string }) {
       "/api/test",
       { kitId, count },
     );
+
+    buildingRef.current = false;
 
     if (!result.ok) {
       setError(result.error);
@@ -72,7 +123,9 @@ export function PracticeTest({ kitId }: { kitId: string }) {
   }
 
   async function submit() {
-    if (!testId) return;
+    if (!testId || markingRef.current) return;
+    markingRef.current = true;
+    setMarking(true);
     setError(null);
 
     const result = await postJSON<{ score: number; results: Result[] }>(
@@ -81,11 +134,15 @@ export function PracticeTest({ kitId }: { kitId: string }) {
       "PUT",
     );
 
+    markingRef.current = false;
+    setMarking(false);
+
     if (!result.ok) {
       setError(result.error);
       return;
     }
 
+    clearSaved(kitId);
     setResults(result.data.results);
     setScore(result.data.score);
     setPhase("marked");
@@ -118,7 +175,7 @@ export function PracticeTest({ kitId }: { kitId: string }) {
               value={count}
               onChange={(e) => setCount(Number(e.target.value))}
               disabled={phase === "building"}
-              className="mt-2 w-full accent-[var(--brass)]"
+              className="mt-2 h-6 w-full accent-[var(--brass)]"
             />
           </div>
 
@@ -131,7 +188,7 @@ export function PracticeTest({ kitId }: { kitId: string }) {
           <button
             onClick={() => void build()}
             disabled={phase === "building"}
-            className="mt-8 rounded-sm bg-ink px-5 py-2.5 text-[15px] font-medium text-bg disabled:opacity-40"
+            className="mt-8 min-h-[44px] rounded-sm bg-ink px-5 py-2.5 text-[15px] font-medium text-bg disabled:opacity-40"
           >
             {phase === "building" ? "Writing the paper…" : "Start the test"}
           </button>
@@ -181,10 +238,19 @@ export function PracticeTest({ kitId }: { kitId: string }) {
 
                       <div className="mt-4 space-y-1.5">
                         {q.options.map((option, oi) => {
-                          const chosen = responses[i] === oi;
+                          // Once marked, show what was actually submitted.
+                          // Reading the live radios here let a click that
+                          // landed while marking was in flight contradict the
+                          // score: the header said 3/3 while the ticked
+                          // option was the wrong one.
+                          const chosen = result
+                            ? result.chosen === oi
+                            : responses[i] === oi;
                           const isAnswer = result?.answer_index === oi;
                           const wrongChoice =
                             result && chosen && !result.correct;
+                          const rightChoice =
+                            result && chosen && result.correct;
 
                           let classes =
                             "border-rule hover:border-ink cursor-pointer";
@@ -199,13 +265,16 @@ export function PracticeTest({ kitId }: { kitId: string }) {
                           return (
                             <label
                               key={oi}
-                              className={`flex items-start gap-3 rounded-sm border px-3 py-2 ${classes}`}
+                              className={`flex min-h-[48px] items-center gap-3 rounded-sm border px-3 py-3 ${classes}`}
                             >
                               <input
                                 type="radio"
                                 name={`q${i}`}
                                 checked={chosen}
-                                disabled={phase === "marked"}
+                                // Locked while marking, so a late click
+                                // cannot disagree with the paper that was
+                                // actually submitted.
+                                disabled={phase === "marked" || marking}
                                 onChange={() =>
                                   setResponses((current) => {
                                     const next = [...current];
@@ -213,7 +282,7 @@ export function PracticeTest({ kitId }: { kitId: string }) {
                                     return next;
                                   })
                                 }
-                                className="mt-1.5 accent-[var(--ink)]"
+                                className="size-[18px] shrink-0 accent-[var(--ink)]"
                               />
                               <span className="text-[13px] text-mute">
                                 {LETTERS[oi]}
@@ -231,10 +300,24 @@ export function PracticeTest({ kitId }: { kitId: string }) {
                                   your answer
                                 </span>
                               ) : null}
+                              {/* A right answer was unlabelled, so a question
+                                  you got right and one you skipped looked
+                                  identical on the marked paper. */}
+                              {phase === "marked" && rightChoice ? (
+                                <span className="shrink-0 text-[12.5px] text-sure">
+                                  your answer
+                                </span>
+                              ) : null}
                             </label>
                           );
                         })}
                       </div>
+
+                      {result && result.chosen === null ? (
+                        <p className="mt-3 text-[12.5px] text-brass">
+                          You left this one blank.
+                        </p>
+                      ) : null}
 
                       {result ? (
                         <p
@@ -262,11 +345,12 @@ export function PracticeTest({ kitId }: { kitId: string }) {
             <div className="mt-8 flex flex-wrap items-center gap-4 border-t border-rule pt-6">
               <button
                 onClick={() => void submit()}
-                className="rounded-sm bg-ink px-5 py-2.5 text-[15px] font-medium text-bg"
+                disabled={marking}
+                className="min-h-[44px] rounded-sm bg-ink px-5 py-2.5 text-[15px] font-medium text-bg disabled:opacity-40"
               >
-                Mark my test
+                {marking ? "Marking…" : "Mark my test"}
               </button>
-              {answered < questions.length ? (
+              {!marking && answered < questions.length ? (
                 <span className="text-[13px] text-brass">
                   {questions.length - answered} unanswered will be marked wrong
                 </span>
@@ -276,6 +360,7 @@ export function PracticeTest({ kitId }: { kitId: string }) {
             <div className="mt-8 flex flex-wrap gap-3 border-t border-rule pt-6">
               <button
                 onClick={() => {
+                  clearSaved(kitId);
                   setPhase("setup");
                   setResults(null);
                   setScore(null);
@@ -284,13 +369,13 @@ export function PracticeTest({ kitId }: { kitId: string }) {
                   setQuestions([]);
                 }
                 }
-                className="rounded-sm bg-ink px-4 py-2 text-[14px] font-medium text-bg"
+                className="min-h-[44px] rounded-sm bg-ink px-4 py-2 text-[14px] font-medium text-bg"
               >
                 Take another
               </button>
               <Link
                 href={`/kits/${kitId}`}
-                className="rounded-sm border border-rule px-4 py-2 text-[14px] font-medium"
+                className="flex min-h-[44px] items-center rounded-sm border border-rule px-4 py-2 text-[14px] font-medium"
               >
                 Back to kit
               </Link>
@@ -303,7 +388,66 @@ export function PracticeTest({ kitId }: { kitId: string }) {
 }
 
 function formatClock(seconds: number) {
-  const m = Math.floor(seconds / 60);
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+    : `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// ------------------------------------------------- an unfinished paper
+
+interface SavedTest {
+  testId: string;
+  questions: Question[];
+  responses: (number | null)[];
+  startedAt: number;
+}
+
+const savedKey = (kitId: string) => `studykit:test:${kitId}`;
+
+/**
+ * Async only so the caller can await it: that keeps the restore out of a
+ * synchronous effect body, which React's rules disallow.
+ */
+async function readSaved(kitId: string): Promise<SavedTest | null> {
+  try {
+    const raw = window.localStorage.getItem(savedKey(kitId));
+    if (!raw) return null;
+    const saved = JSON.parse(raw) as SavedTest;
+    const sane =
+      saved?.testId &&
+      Array.isArray(saved.questions) &&
+      saved.questions.length > 0 &&
+      Array.isArray(saved.responses) &&
+      saved.responses.length === saved.questions.length &&
+      typeof saved.startedAt === "number";
+    if (!sane) return null;
+
+    // A paper left for a day is not a sitting worth resuming.
+    if (Date.now() - saved.startedAt > 12 * 3600_000) {
+      window.localStorage.removeItem(savedKey(kitId));
+      return null;
+    }
+    return saved;
+  } catch {
+    return null;
+  }
+}
+
+function writeSaved(kitId: string, saved: SavedTest) {
+  try {
+    window.localStorage.setItem(savedKey(kitId), JSON.stringify(saved));
+  } catch {
+    // Private browsing, or storage full. Resuming is a convenience.
+  }
+}
+
+function clearSaved(kitId: string) {
+  try {
+    window.localStorage.removeItem(savedKey(kitId));
+  } catch {
+    // Nothing to do: the saved copy expires on its own.
+  }
 }

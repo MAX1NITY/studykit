@@ -20,10 +20,15 @@ export type ApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: ApiFailure };
 
+const UNREACHABLE: ApiFailure = {
+  title: "Could not reach StudyKit.",
+  hint: "That one is usually the connection. Check it and try again.",
+};
+
 export async function postJSON<T>(
   url: string,
   body: unknown,
-  method: "POST" | "PUT" = "POST",
+  method: "POST" | "PUT" | "DELETE" = "POST",
 ): Promise<ApiResult<T>> {
   let res: Response;
 
@@ -34,15 +39,25 @@ export async function postJSON<T>(
       body: JSON.stringify(body),
     });
   } catch {
-    return {
-      ok: false,
-      error: {
-        title: "Could not reach StudyKit.",
-        hint: "That one is usually the connection. Check it and try again.",
-      },
-    };
+    return { ok: false, error: UNREACHABLE };
   }
 
+  return readBody<T>(res);
+}
+
+export async function getJSON<T>(url: string): Promise<ApiResult<T>> {
+  let res: Response;
+
+  try {
+    res = await fetch(url);
+  } catch {
+    return { ok: false, error: UNREACHABLE };
+  }
+
+  return readBody<T>(res);
+}
+
+async function readBody<T>(res: Response): Promise<ApiResult<T>> {
   const text = await res.text().catch(() => "");
 
   let payload: unknown = null;

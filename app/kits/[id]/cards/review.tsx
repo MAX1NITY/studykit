@@ -1,17 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
+import { getJSON, postJSON } from "@/lib/fetch-json";
 import { Notice } from "@/components/chrome";
 import {
+  RELEARN_MINUTES,
   formatInterval,
   previewIntervals,
   review,
   type Grade,
 } from "@/lib/srs";
 
-interface Card {
+export interface Card {
   id: string;
   front: string;
   back: string;
@@ -20,6 +21,13 @@ interface Card {
   interval_days: number;
   repetitions: number;
   lapses: number;
+  due_at: string;
+}
+
+/** A card that was failed and is waiting out its relearning delay. */
+interface Waiting {
+  card: Card;
+  dueAt: number;
 }
 
 const GRADES: { grade: Grade; label: string; key: string; tone: string }[] = [
@@ -29,88 +37,115 @@ const GRADES: { grade: Grade; label: string; key: string; tone: string }[] = [
   { grade: "easy", label: "Easy", key: "4", tone: "text-sure" },
 ];
 
-export function CardReview({ kitId }: { kitId: string }) {
-  const supabase = useMemo(() => createClient(), []);
+/** True when the keystroke belongs to whatever the student has focused. */
+function typingInto(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return (
+    tag === "BUTTON" ||
+    tag === "A" ||
+    tag === "INPUT" ||
+    tag === "TEXTAREA" ||
+    tag === "SELECT" ||
+    target.isContentEditable
+  );
+}
 
-  const [queue, setQueue] = useState<Card[]>([]);
+export function CardReview({
+  kitId,
+  initialQueue,
+  initialRelearn,
+  initialMore,
+}: {
+  kitId: string;
+  initialQueue: Card[];
+  initialRelearn: Card[];
+  initialMore: boolean;
+}) {
+  const [queue, setQueue] = useState<Card[]>(initialQueue);
+  const [relearn, setRelearn] = useState<Waiting[]>(() =>
+    initialRelearn.map((c) => ({ card: c, dueAt: Date.parse(c.due_at) })),
+  );
+
+  const [more, setMore] = useState(initialMore);
   const [revealed, setRevealed] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [finished, setFinished] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(0);
-  const [again, setAgain] = useState(0);
+  const [tick, setTick] = useState(() => Date.now());
 
-  const card = queue[0] ?? null;
+  // Grading is in-flight per card id. Without this, two activations of the
+  // same card shift the *next*, unseen card off the queue and count it as
+  // reviewed — which is how a card could be silently skipped on a slow phone.
+  const gradingRef = useRef<string | null>(null);
+  const doneIdsRef = useRef<Set<string>>(new Set());
+  const loadingMoreRef = useRef(false);
 
-  // Load the due queue once. Awaiting before any state update keeps this
-  // effect free of synchronous setState.
-  useEffect(() => {
-    let cancelled = false;
-
-    supabase
-      .from("cards")
-      .select("id, front, back, concept, ease, interval_days, repetitions, lapses")
-      .eq("kit_id", kitId)
-      .lte("due_at", new Date().toISOString())
-      .order("due_at", { ascending: true })
-      .limit(60)
-      .then(({ data, error: queryError }) => {
-        if (cancelled) return;
-        if (queryError) setError(queryError.message);
-        else setQueue((data ?? []) as Card[]);
-        setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [kitId, supabase]);
+  // A relearning card whose time has come takes priority: it is overdue, and
+  // getting it back in front of the student is the point of relearning.
+  const readyIndex = relearn.findIndex((w) => w.dueAt <= tick);
+  const card = readyIndex >= 0 ? relearn[readyIndex].card : (queue[0] ?? null);
+  const pending = readyIndex >= 0 ? [] : relearn;
 
   const grade = useCallback(
     async (chosen: Grade) => {
-      if (!card) return;
+      if (!card || gradingRef.current === card.id) return;
+      gradingRef.current = card.id;
 
+      const id = card.id;
       const next = review(card, chosen);
-      setRevealed(false);
-      setDone((n) => n + 1);
-      if (chosen === "again") setAgain((n) => n + 1);
+      const lapsed = chosen === "again";
 
-      // Drop the card from the front of the queue. A lapsed card goes to the
-      // back so it comes round again in this same session.
-      setQueue((current) => {
-        const [head, ...rest] = current;
-        if (chosen === "again" && head) {
-          return [...rest, { ...head, ...next }];
-        }
-        return rest;
+      setRevealed(false);
+      setQueue((q) => q.filter((c) => c.id !== id));
+      setRelearn((r) => {
+        const without = r.filter((w) => w.card.id !== id);
+        return lapsed
+          ? [
+              ...without,
+              { card: { ...card, ...next }, dueAt: Date.parse(next.due_at) },
+            ]
+          : without;
       });
 
-      const { error: updateError } = await supabase
-        .from("cards")
-        .update({
-          ease: next.ease,
-          interval_days: next.interval_days,
-          repetitions: next.repetitions,
-          lapses: next.lapses,
-          due_at: next.due_at,
-          last_reviewed_at: next.last_reviewed_at,
-        })
-        .eq("id", card.id);
+      if (lapsed) {
+        doneIdsRef.current.delete(id);
+      } else if (!doneIdsRef.current.has(id)) {
+        doneIdsRef.current.add(id);
+        setFinished((n) => n + 1);
+      }
 
-      if (updateError) setError(updateError.message);
+      const result = await postJSON(`/api/cards`, { cardId: id, grade: chosen });
+      gradingRef.current = null;
+
+      // The write failed, so the card is still due in the database. Put it
+      // back rather than leaving the student believing it was recorded.
+      if (!result.ok) {
+        setError(result.error.title);
+        setRelearn((r) => r.filter((w) => w.card.id !== id));
+        setQueue((q) => (q.some((c) => c.id === id) ? q : [card, ...q]));
+        if (!lapsed && doneIdsRef.current.delete(id)) {
+          setFinished((n) => Math.max(0, n - 1));
+        }
+      }
     },
-    [card, supabase],
+    [card],
   );
 
-  // Space reveals the answer, then 1-4 grade it.
+  // Space reveals the answer; 1-4 grade it. Nothing here claims Enter, and
+  // nothing fires while a button or link is focused, so Enter on the "Again"
+  // button presses Again instead of being swallowed and recorded as Good,
+  // and the keyboard can still reach "End session".
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (!card) return;
-      if (event.key === " " || event.key === "Enter") {
+      if (!card || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (typingInto(event.target)) return;
+
+      if (event.key === " " && !revealed) {
         event.preventDefault();
-        if (!revealed) setRevealed(true);
-        else void grade("good");
+        setRevealed(true);
         return;
       }
+
       if (revealed) {
         const match = GRADES.find((g) => g.key === event.key);
         if (match) {
@@ -119,29 +154,85 @@ export function CardReview({ kitId }: { kitId: string }) {
         }
       }
     }
+
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [card, grade, revealed]);
 
+  // Keep the relearning countdown honest, and bring a card back the moment
+  // its delay is up. Only runs while something is actually waiting.
+  useEffect(() => {
+    if (pending.length === 0) return;
+    const timer = setInterval(() => setTick(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [pending.length]);
+
+  /*
+   * One sitting loads a batch at a time. When the batch runs out there may be
+   * more waiting, so fetch the next batch instead of announcing that the
+   * session is over — the screen used to say "Done for now" with cards still
+   * due. Every state write happens after the await, so this stays clear of
+   * synchronous updates during an effect.
+   */
+  useEffect(() => {
+    if (card || pending.length > 0 || !more || loadingMoreRef.current) return;
+    loadingMoreRef.current = true;
+
+    void (async () => {
+      const result = await getJSON<{
+        ready: Card[];
+        relearning: Card[];
+        more: boolean;
+      }>(`/api/cards?kit=${kitId}`);
+      loadingMoreRef.current = false;
+
+      if (!result.ok) {
+        setError(result.error.title);
+        setMore(false);
+        return;
+      }
+
+      const unseen = (cards: Card[]) =>
+        cards.filter((c) => !doneIdsRef.current.has(c.id));
+
+      const ready = unseen(result.data.ready);
+      const relearning = unseen(result.data.relearning);
+
+      setMore(result.data.more && ready.length + relearning.length > 0);
+      setQueue(ready);
+      setRelearn(
+        relearning.map((c) => ({ card: c, dueAt: Date.parse(c.due_at) })),
+      );
+    })();
+  }, [card, pending.length, more, kitId]);
+
   const previews = card ? previewIntervals(card) : null;
+  const left = queue.length + relearn.length;
+  const soonest = pending.length
+    ? Math.min(...pending.map((w) => w.dueAt))
+    : null;
+  const waitMinutes =
+    soonest === null ? 0 : Math.max(1, Math.ceil((soonest - tick) / 60_000));
 
   return (
-    <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col px-4 py-8 sm:px-6">
-      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-rule pb-3 text-[13px]">
+    <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col px-4 py-6 sm:px-6 sm:py-8">
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1 border-b border-rule pb-3 text-[13px]">
         <span className="text-mute">
-          {loading
-            ? "Loading cards…"
-            : queue.length > 0
-              ? `${queue.length} left in this session`
-              : "Session complete"}
+          {left > 0
+            ? `${left} left in this session`
+            : finished > 0
+              ? "Session complete"
+              : ""}
         </span>
-        {done > 0 ? (
+        {finished > 0 || relearn.length > 0 ? (
           <span className="text-mute">
-            {done} reviewed
-            {again > 0 ? (
+            {finished} card{finished === 1 ? "" : "s"} done
+            {relearn.length > 0 ? (
               <>
                 {" · "}
-                <span className="text-mark">{again} to relearn</span>
+                <span className="text-mark">
+                  {relearn.length} relearning
+                </span>
               </>
             ) : null}
           </span>
@@ -149,31 +240,70 @@ export function CardReview({ kitId }: { kitId: string }) {
       </div>
 
       {error ? (
-        <div className="mt-8">
-          <Notice title={error} />
+        <div className="mt-6">
+          <Notice
+            title={error}
+            hint="That review was not saved, so the card is still due. Try again."
+          />
         </div>
       ) : null}
 
-      {!loading && !card ? (
-        <div className="mt-16 max-w-[52ch]">
+      {/* Everything is due later: say when, and let them push on if they want. */}
+      {!card && pending.length > 0 ? (
+        <div className="mt-12 max-w-[52ch]">
           <h1 className="read text-[24px] leading-snug">
-            {done > 0 ? "Done for now." : "Nothing is due yet."}
+            {pending.length} card{pending.length === 1 ? "" : "s"} to relearn.
           </h1>
           <p className="mt-3 text-[15px] leading-relaxed text-mute">
-            {done > 0
-              ? "Cards you graded Good or Easy will come back when the interval is up. Anything you marked Again is due again in ten minutes."
+            Cards you forget come back after about {RELEARN_MINUTES} minutes,
+            which is long enough for the recall to be worth something. The next
+            one is ready in {waitMinutes} minute{waitMinutes === 1 ? "" : "s"},
+            and will appear here on its own.
+          </p>
+          <div className="mt-6 flex flex-wrap gap-3">
+            <button
+              onClick={() => {
+                // Move them into the sitting rather than winding the clock
+                // forward: a shifted clock would also make the *next* card
+                // they fail instantly due, which is the loop that drove a
+                // card's ease to the floor in seconds.
+                setQueue((q) => [...q, ...pending.map((w) => w.card)]);
+                setRelearn([]);
+              }}
+              className="min-h-[44px] rounded-sm bg-ink px-4 py-2 text-[14px] font-medium text-bg"
+            >
+              Review them now
+            </button>
+            <Link
+              href={`/kits/${kitId}/study`}
+              className="flex min-h-[44px] items-center rounded-sm border border-rule px-4 py-2 text-[14px] font-medium"
+            >
+              Go to Smart Study
+            </Link>
+          </div>
+        </div>
+      ) : null}
+
+      {!card && pending.length === 0 ? (
+        <div className="mt-12 max-w-[52ch]">
+          <h1 className="read text-[24px] leading-snug">
+            {finished > 0 ? "Done for now." : "Nothing is due yet."}
+          </h1>
+          <p className="mt-3 text-[15px] leading-relaxed text-mute">
+            {finished > 0
+              ? `${finished} card${finished === 1 ? "" : "s"} reviewed. Each one comes back when its interval is up — that spacing is what makes it stick.`
               : "Spaced repetition means waiting is part of it. Come back when cards fall due, or use Smart Study in the meantime, which has no schedule."}
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             <Link
               href={`/kits/${kitId}/study`}
-              className="rounded-sm bg-ink px-4 py-2 text-[14px] font-medium text-bg"
+              className="flex min-h-[44px] items-center rounded-sm bg-ink px-4 py-2 text-[14px] font-medium text-bg"
             >
               Go to Smart Study
             </Link>
             <Link
               href={`/kits/${kitId}`}
-              className="rounded-sm border border-rule px-4 py-2 text-[14px] font-medium"
+              className="flex min-h-[44px] items-center rounded-sm border border-rule px-4 py-2 text-[14px] font-medium"
             >
               Back to kit
             </Link>
@@ -183,7 +313,10 @@ export function CardReview({ kitId }: { kitId: string }) {
 
       {card ? (
         <>
-          <div className="flex flex-1 flex-col justify-center py-10">
+          {/* Fixed top padding rather than vertical centring: centring moved
+              the question up by over a hundred pixels the instant the answer
+              appeared, so every card lurched as it was revealed. */}
+          <div className="flex flex-1 flex-col pt-10 pb-6 sm:pt-14">
             {card.concept ? (
               <p className="text-[13px] text-mute">{card.concept}</p>
             ) : null}
@@ -201,7 +334,7 @@ export function CardReview({ kitId }: { kitId: string }) {
             ) : (
               <button
                 onClick={() => setRevealed(true)}
-                className="mt-8 self-start rounded-sm border border-ink px-4 py-2 text-[14px] font-medium"
+                className="mt-8 min-h-[44px] self-start rounded-sm border border-ink px-4 py-2 text-[14px] font-medium"
               >
                 Show answer
                 <span className="ml-2 text-mute">Space</span>
@@ -217,7 +350,7 @@ export function CardReview({ kitId }: { kitId: string }) {
                   <button
                     key={g}
                     onClick={() => void grade(g)}
-                    className="rounded-sm border border-rule px-3 py-2.5 text-left hover:border-ink"
+                    className="min-h-[56px] rounded-sm border border-rule px-3 py-2.5 text-left hover:border-ink"
                   >
                     <span className={`block text-[14px] font-medium ${tone}`}>
                       {label}
@@ -228,16 +361,11 @@ export function CardReview({ kitId }: { kitId: string }) {
                   </button>
                 ))}
               </div>
-              {card.repetitions > 0 ? (
-                <p className="mt-3 text-[12.5px] text-mute">
-                  Seen {card.repetitions} time
-                  {card.repetitions === 1 ? "" : "s"} · current interval{" "}
-                  {formatInterval(card.interval_days)}
-                  {card.lapses > 0 ? ` · forgotten ${card.lapses}×` : ""}
-                </p>
-              ) : (
-                <p className="mt-3 text-[12.5px] text-mute">First time seeing this card.</p>
-              )}
+              <p className="mt-3 text-[12.5px] text-mute">
+                {card.repetitions > 0 || card.lapses > 0
+                  ? `Seen ${card.repetitions + card.lapses} time${card.repetitions + card.lapses === 1 ? "" : "s"} · current interval ${formatInterval(card.interval_days)}${card.lapses > 0 ? ` · forgotten ${card.lapses}×` : ""}`
+                  : "First time seeing this card."}
+              </p>
             </div>
           ) : null}
         </>

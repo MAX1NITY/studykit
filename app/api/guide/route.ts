@@ -33,6 +33,31 @@ export async function POST(request: Request) {
 
     if (insertError) return fail(insertError.message, 500);
 
+    /*
+     * Keep the newest guide and drop the rest.
+     *
+     * The page only ever reads the latest row, so every rewrite was leaving
+     * another full guide behind it — invisible, and growing with each press.
+     * Deleting after the insert means a failed insert cannot lose the guide
+     * the student already had.
+     */
+    const { data: stale } = await supabase
+      .from("guides")
+      .select("id")
+      .eq("kit_id", kitId)
+      .order("created_at", { ascending: false })
+      .range(1, 50);
+
+    if (stale?.length) {
+      await supabase
+        .from("guides")
+        .delete()
+        .in(
+          "id",
+          stale.map((row) => row.id),
+        );
+    }
+
     return Response.json({ markdown });
   } catch (cause) {
     return failFrom(cause);
