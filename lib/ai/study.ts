@@ -1,55 +1,8 @@
 import { getProvider, type JSONSchema } from "./provider";
+import { BUDGETS, partCount, selectMaterial, type SourceLike } from "./material";
 
-/** One piece of uploaded material. */
-export interface SourceLike {
-  name: string;
-  content: string;
-}
-
-/*
- * How much material each task sends.
- *
- * These are small on purpose. A single Smart Study question does not need
- * thirty pages of context to be a good question, and sending them made the
- * call slow enough to be cut off. Each budget is the least that still lets
- * the task do its job well.
- */
-const BUDGETS = {
-  question: 8_000,
-  cards: 20_000,
-  test: 20_000,
-  guide: 30_000,
-} as const;
-
-/**
- * Joins the sources into one labelled block, capped at `budget` characters.
- *
- * `offset` slides the window through long material, so a session works across
- * the whole document instead of asking about page one forever. The window is
- * nudged to the nearest paragraph break to avoid starting mid-sentence.
- */
-export function selectMaterial(
-  sources: SourceLike[],
-  budget: number = BUDGETS.cards,
-  offset = 0,
-): string {
-  const joined = sources
-    .map((s) => `### ${s.name}\n${s.content.trim()}`)
-    .join("\n\n");
-
-  if (joined.length <= budget) return joined;
-
-  const start = offset % Math.max(joined.length - budget, 1);
-
-  // Start at a paragraph break within the next 500 characters, if there is one.
-  const breakAt = joined.indexOf("\n\n", start);
-  const from = breakAt !== -1 && breakAt - start < 500 ? breakAt + 2 : start;
-
-  const part = Math.floor(from / budget) + 1;
-  const parts = Math.ceil(joined.length / budget);
-
-  return `(This is part ${part} of ${parts} of the student's material. Work only from what is here.)\n\n${joined.slice(from, from + budget)}`;
-}
+// Slicing long uploads lives in ./material so it can be tested on its own.
+export { BUDGETS, partCount, selectMaterial, type SourceLike };
 
 const TUTOR_VOICE = `You are a rigorous, encouraging study coach.
 You only ever use the student's own uploaded material as the source of truth.
@@ -103,8 +56,15 @@ const cardsSchema: JSONSchema = {
 export async function generateCards(
   sources: SourceLike[],
   cardCount = 16,
+  part = 0,
 ): Promise<GeneratedCards> {
-  const material = selectMaterial(sources, BUDGETS.cards);
+  // Each run reads the next slice, so a long document is covered over
+  // several runs rather than the first fifth of it over and over.
+  const material = selectMaterial(
+    sources,
+    BUDGETS.cards,
+    part * BUDGETS.cards,
+  );
 
   return getProvider().generateJSON<GeneratedCards>(cardsSchema, {
     system: TUTOR_VOICE,
@@ -131,8 +91,16 @@ ${material}`,
 
 // ---------------------------------------------------------- study guide
 
-export async function generateGuide(sources: SourceLike[]): Promise<string> {
-  const material = selectMaterial(sources, BUDGETS.guide);
+/** Writes the guide for one slice of the material. */
+async function generateGuidePart(
+  sources: SourceLike[],
+  part: number,
+): Promise<string> {
+  const material = selectMaterial(
+    sources,
+    BUDGETS.guide,
+    part * BUDGETS.guide,
+  );
 
   return getProvider().generateText({
     system: TUTOR_VOICE,
@@ -155,6 +123,27 @@ introduction about what you are about to do.
 MATERIAL:
 ${material}`,
   });
+}
+
+/**
+ * Writes a guide covering the whole kit.
+ *
+ * Long material is divided into slices and written in parallel, because a
+ * guide that only summarises the first quarter of what you uploaded is worse
+ * than useless: it looks complete.
+ */
+export async function generateGuide(sources: SourceLike[]): Promise<string> {
+  const parts = Math.min(partCount(sources, BUDGETS.guide), 6);
+
+  if (parts === 1) return generateGuidePart(sources, 0);
+
+  const written = await Promise.all(
+    Array.from({ length: parts }, (_, i) => generateGuidePart(sources, i)),
+  );
+
+  return written
+    .map((section, i) => `# Part ${i + 1} of ${parts}\n\n${section.trim()}`)
+    .join("\n\n");
 }
 
 // --------------------------------------------------------- smart study
@@ -457,8 +446,9 @@ const testSchema: JSONSchema = {
 export async function generateTest(
   sources: SourceLike[],
   count = 10,
+  part = 0,
 ): Promise<TestQuestion[]> {
-  const material = selectMaterial(sources, BUDGETS.test);
+  const material = selectMaterial(sources, BUDGETS.test, part * BUDGETS.test);
 
   const { questions } = await getProvider().generateJSON<{
     questions: TestQuestion[];

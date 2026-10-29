@@ -9,7 +9,8 @@ import { since } from "@/lib/format";
 export default async function KitPage(props: PageProps<"/kits/[id]">) {
   const { id } = await props.params;
   const search = await props.searchParams;
-  const cardsFailed = search?.cards === "failed";
+  // Set when card writing failed during kit creation, so the kit page can
+  // explain what happened rather than just showing an empty deck.
   const failureReason = typeof search?.why === "string" ? search.why : undefined;
   const session = await getSession();
   if (!session) redirect("/login");
@@ -137,26 +138,25 @@ export default async function KitPage(props: PageProps<"/kits/[id]">) {
           ))}
         </ul>
 
-        {kit.card_count === 0 || cardsFailed ? (
-          <section className="mt-10">
-            <h2 className="text-[14px] font-medium">
-              {kit.card_count === 0
-                ? "This kit has no flashcards yet"
-                : "Flashcards"}
-            </h2>
-            <p className="mt-1 max-w-[58ch] text-[13px] text-mute">
-              Your material is saved and Smart Study works without cards. Write
-              a deck whenever you want one.
-            </p>
-            <div className="mt-4">
-              <GenerateCards
-                kitId={id}
-                hasCards={kit.card_count > 0}
-                initialError={failureReason}
-              />
-            </div>
-          </section>
-        ) : null}
+        <section className="mt-10">
+          <h2 className="text-[14px] font-medium">
+            {kit.card_count === 0
+              ? "This kit has no flashcards yet"
+              : "More flashcards"}
+          </h2>
+          <p className="mt-1 max-w-[58ch] text-[13px] text-mute">
+            {kit.card_count === 0
+              ? "Your material is saved and Smart Study works without cards. Write a deck whenever you want one."
+              : "Long material is read a slice at a time, so run this again to write cards for the parts not covered yet."}
+          </p>
+          <div className="mt-4">
+            <GenerateCards
+              kitId={id}
+              hasCards={kit.card_count > 0}
+              initialError={failureReason}
+            />
+          </div>
+        </section>
 
         {weak.length > 0 ? (
           <section className="mt-12">

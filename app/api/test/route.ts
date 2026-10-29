@@ -1,6 +1,6 @@
 import { getSession } from "@/lib/auth";
 import { fail, failFrom, unauthorized } from "@/lib/api";
-import { generateTest, type TestQuestion } from "@/lib/ai/study";
+import { BUDGETS, generateTest, partCount, type TestQuestion } from "@/lib/ai/study";
 
 // Hobby allows up to 300s with fluid compute; 60 was cutting AI calls off.
 export const maxDuration = 300;
@@ -28,7 +28,19 @@ export async function POST(request: Request) {
     if (sourcesError) return fail(sourcesError.message, 500);
     if (!sources?.length) return fail("This kit has no material attached.", 404);
 
-    const questions = await generateTest(sources, questionCount);
+    // Each test covers a different slice, so sitting three tests examines
+    // three parts of the material instead of the same opening three times.
+    const { count: taken } = await supabase
+      .from("tests")
+      .select("id", { count: "exact", head: true })
+      .eq("kit_id", kitId);
+
+    const parts = partCount(sources, BUDGETS.test);
+    const questions = await generateTest(
+      sources,
+      questionCount,
+      (taken ?? 0) % parts,
+    );
     if (!questions.length) {
       return fail("The AI could not build a test from this material.", 502);
     }

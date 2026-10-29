@@ -1,6 +1,6 @@
 import { getSession } from "@/lib/auth";
 import { fail, failFrom, unauthorized } from "@/lib/api";
-import { generateCards } from "@/lib/ai/study";
+import { BUDGETS, generateCards, partCount } from "@/lib/ai/study";
 
 // Hobby allows up to 300s with fluid compute. Generating cards is the longest
 // call in the app, so give it the room rather than cutting it off early.
@@ -16,9 +16,10 @@ export async function POST(
   const { supabase, user } = session;
 
   const { id: kitId } = await params;
-  const { count, replace } = (await request.json().catch(() => ({}))) as {
+  const { count, replace, part } = (await request.json().catch(() => ({}))) as {
     count?: number;
     replace?: boolean;
+    part?: number;
   };
 
   const cardCount = Math.min(Math.max(count ?? 16, 6), 40);
@@ -34,7 +35,24 @@ export async function POST(
       return fail("This kit has no material attached.", 404);
     }
 
-    const generated = await generateCards(sources, cardCount);
+    const parts = partCount(sources, BUDGETS.cards);
+
+    // Work through the material rather than re-reading its opening. Which
+    // slice comes next is worked out from how many cards already exist, so
+    // pressing the button again simply continues.
+    const { count: existing } = await supabase
+      .from("cards")
+      .select("id", { count: "exact", head: true })
+      .eq("kit_id", kitId);
+
+    const nextPart =
+      typeof part === "number"
+        ? part
+        : replace
+          ? 0
+          : Math.floor((existing ?? 0) / cardCount) % parts;
+
+    const generated = await generateCards(sources, cardCount, nextPart);
 
     if (replace) {
       const { error: clearError } = await supabase
@@ -75,8 +93,17 @@ export async function POST(
       await supabase.from("kits").update(patch).eq("id", kitId);
     }
 
+    const { count: total } = await supabase
+      .from("cards")
+      .select("id", { count: "exact", head: true })
+      .eq("kit_id", kitId);
+
     return Response.json({
       card_count: cards.length,
+      total_cards: total ?? cards.length,
+      part: nextPart + 1,
+      parts,
+      covered: Math.min(nextPart + 1, parts) >= parts,
       concepts: generated.concepts ?? [],
     });
   } catch (cause) {
