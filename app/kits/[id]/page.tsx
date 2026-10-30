@@ -37,78 +37,23 @@ export default async function KitPage(props: PageProps<"/kits/[id]">) {
 
   if (!kit) notFound();
 
-  const mastery = masteryOf({
-    cards: progress?.cards ?? 0,
-    cardsSeen: progress?.cards_seen ?? 0,
-    cardsPassed: progress?.cards_passed ?? 0,
-    answered: progress?.answered ?? 0,
-    recentScores: (progress?.recent_scores as number[] | null) ?? [],
-    hardCorrect: progress?.hard_correct ?? 0,
-    tests: progress?.tests ?? 0,
-    bestTestPercent: progress?.best_test_percent ?? null,
-  } satisfies Progress);
+  const mastery = masteryOf(
+    {
+      cards: progress?.cards ?? 0,
+      cardsSeen: progress?.cards_seen ?? 0,
+      cardsPassed: progress?.cards_passed ?? 0,
+      answered: progress?.answered ?? 0,
+      recentScores: (progress?.recent_scores as number[] | null) ?? [],
+      hardCorrect: progress?.hard_correct ?? 0,
+      tests: progress?.tests ?? 0,
+      bestTestPercent: progress?.best_test_percent ?? null,
+    } satisfies Progress,
+    id,
+  );
 
   const studied = since(kit.last_attempt_at as string | null);
   const weak = (stats ?? []).filter((s) => (s.avg_score ?? 100) < 70);
   const strong = (stats ?? []).filter((s) => (s.avg_score ?? 0) >= 70);
-
-  const modes = [
-    {
-      href: `/kits/${id}/study`,
-      name: "Smart Study",
-      blurb:
-        "Typed answers, marked and explained. Gets harder as you get better.",
-      status:
-        kit.answered_count > 0
-          ? `${kit.avg_score ?? 0}% over ${kit.answered_count} question${kit.answered_count === 1 ? "" : "s"}`
-          : "Not started",
-      tone:
-        kit.answered_count > 0
-          ? (kit.avg_score ?? 0) >= 70
-            ? "text-sure"
-            : "text-brass"
-          : "text-mute",
-    },
-    {
-      href: `/kits/${id}/cards`,
-      name: "Flashcards",
-      blurb: "Spaced repetition. Cards you miss come back sooner.",
-      status:
-        kit.card_count === 0
-          ? "None yet"
-          : kit.due_count > 0
-            ? `${kit.due_count} due now`
-            : `${kit.card_count} card${kit.card_count === 1 ? "" : "s"}, none due`,
-      tone:
-        kit.card_count === 0
-          ? "text-brass"
-          : kit.due_count > 0
-            ? "text-brass"
-            : "text-mute",
-    },
-    {
-      href: `/kits/${id}/test`,
-      name: "Practice test",
-      blurb: "Multiple choice, marked at the end like a real paper.",
-      status:
-        kit.last_test_score !== null && kit.last_test_total
-          ? `Last: ${kit.last_test_score}/${kit.last_test_total}`
-          : "No attempts yet",
-      tone:
-        kit.last_test_score !== null && kit.last_test_total
-          ? kit.last_test_score / kit.last_test_total >= 0.7
-            ? "text-sure"
-            : "text-brass"
-          : "text-mute",
-    },
-    {
-      href: `/kits/${id}/guide`,
-      name: "Revision guide",
-      blurb: "The material condensed, with the easily-confused pairs called out.",
-      status: kit.guide_count > 0 ? "Ready to read" : "Write it",
-      tone: kit.guide_count > 0 ? "text-mute" : "text-brass",
-    },
-  ];
 
   return (
     <>
@@ -130,32 +75,13 @@ export default async function KitPage(props: PageProps<"/kits/[id]">) {
             : ""}
         </p>
 
-        <div className="mt-7">
-          <KitProgress mastery={mastery} />
+        <div className="mt-9">
+          <KitProgress
+            mastery={mastery}
+            guideHref={`/kits/${id}/guide`}
+            hasGuide={kit.guide_count > 0}
+          />
         </div>
-
-        <ul className="mt-9 border-t border-rule">
-          {modes.map((mode) => (
-            <li key={mode.href} className="border-b border-rule">
-              <Link
-                href={mode.href}
-                className="group flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 py-5"
-              >
-                <div className="min-w-0 max-w-[46ch]">
-                  <h2 className="text-[16px] font-medium group-hover:underline group-hover:underline-offset-4">
-                    {mode.name}
-                  </h2>
-                  <p className="mt-0.5 text-[13.5px] leading-relaxed text-mute">
-                    {mode.blurb}
-                  </p>
-                </div>
-                <span className={`shrink-0 text-[14px] ${mode.tone}`}>
-                  {mode.status}
-                </span>
-              </Link>
-            </li>
-          ))}
-        </ul>
 
         <section className="mt-10">
           <h2 className="text-[14px] font-medium">

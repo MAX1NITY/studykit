@@ -1,32 +1,33 @@
-import type { Mastery, Requirement, Tier } from "@/lib/mastery";
+import Link from "next/link";
+import type { KitMastery, Ladder } from "@/lib/mastery";
 
 /**
- * The three tiers of a kit, and what is still owed on the next one.
+ * Each way of studying, with the three stars it has earned and the one plain
+ * sentence of what the next star wants.
  *
- * The earned tiers collapse to a line and the one being worked towards is
- * open, because the useful question is not "how have I done" but "what does
- * this chapter still want from me". Each tier keeps flashcards, questions and
- * practice tests on separate rows, so the work cannot be met by leaning
- * entirely on whichever one feels easiest.
+ * The stars sit on the feature rather than on the kit because they are
+ * different skills — recognising a flashcard is not answering cold, and
+ * neither is sitting a timed paper — and because a shared ladder would let a
+ * strong night on cards carry a feature that had not been opened.
  */
 
-const ACTIVITY_LABEL: Record<Requirement["activity"], string> = {
-  cards: "Flashcards",
-  questions: "Smart Study",
-  test: "Practice test",
-};
-
-function Stars({ earned, total = 3 }: { earned: number; total?: number }) {
+function Stars({ earned, dim }: { earned: number; dim?: boolean }) {
   return (
     <span
       className="inline-flex gap-0.5 text-[15px] leading-none"
-      aria-label={`${earned} of ${total} tiers earned`}
+      aria-label={`${earned} of 3 stars`}
     >
-      {Array.from({ length: total }, (_, i) => (
+      {[0, 1, 2].map((i) => (
         <span
           key={i}
           aria-hidden
-          className={i < earned ? "text-brass" : "text-[var(--rule)]"}
+          className={
+            i < earned
+              ? dim
+                ? "text-mute"
+                : "text-brass"
+              : "text-[var(--rule)]"
+          }
         >
           {i < earned ? "★" : "☆"}
         </span>
@@ -35,129 +36,128 @@ function Stars({ earned, total = 3 }: { earned: number; total?: number }) {
   );
 }
 
-function Bar({ have, need }: { have: number; need: number }) {
-  const pct = need > 0 ? Math.min(100, Math.round((have / need) * 100)) : 100;
-  return (
-    <div
-      className="mt-1.5 h-[3px] w-full overflow-hidden rounded-full bg-[var(--rule)]"
-      role="presentation"
-    >
-      <div
-        className={`h-full rounded-full ${pct >= 100 ? "bg-sure" : "bg-ink"}`}
-        style={{ width: `${pct}%` }}
-      />
-    </div>
+/** How far through the next star this ladder is, as a single fraction. */
+function nextStarProgress(ladder: Ladder): number {
+  if (!ladder.next) return 1;
+  const parts = ladder.next.requirements.map((r) =>
+    r.need > 0 ? Math.min(1, r.have / r.need) : 1,
   );
+  return parts.reduce((n, p) => n + p, 0) / parts.length;
 }
 
-function RequirementRow({ requirement }: { requirement: Requirement }) {
-  const { label, have, need, unit, met, idle, activity } = requirement;
-  const suffix = unit === "percent" ? "%" : "";
+function FeatureRow({ ladder, blurb }: { ladder: Ladder; blurb: string }) {
+  const pct = Math.round(nextStarProgress(ladder) * 100);
 
-  if (idle) {
-    return (
-      <li className="py-2">
-        <div className="flex items-baseline justify-between gap-4 text-[13px]">
-          <span className="text-mute">
-            <span className="text-mute/70">{ACTIVITY_LABEL[activity]}</span>{" "}
-            · {label}
+  return (
+    <li className="border-b border-rule">
+      <Link
+        href={ladder.href}
+        className="group block py-5"
+        aria-label={`${ladder.name}, ${ladder.stars} of 3 stars`}
+      >
+        <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+          <h2 className="text-[16px] font-medium group-hover:underline group-hover:underline-offset-4">
+            {ladder.name}
+          </h2>
+          {/* Only the stars: naming the tier here read as the state you were
+              in rather than the one you were heading for, and the sentence
+              underneath already says what it wants. */}
+          <span className="flex shrink-0 items-baseline gap-2.5">
+            {ladder.next ? null : (
+              <span className="text-[13px] text-sure">all three</span>
+            )}
+            <Stars earned={ladder.stars} dim={!ladder.available} />
           </span>
         </div>
-      </li>
-    );
-  }
 
-  return (
-    <li className="py-2">
-      <div className="flex items-baseline justify-between gap-4 text-[13px]">
-        <span className={met ? "text-mute" : "text-ink"}>
-          <span className="text-mute/70">{ACTIVITY_LABEL[activity]}</span> ·{" "}
-          {label}
-        </span>
-        <span
-          className={`shrink-0 tabular-nums ${met ? "text-sure" : "text-mute"}`}
-        >
-          {have}
-          {suffix} / {need}
-          {suffix}
-        </span>
-      </div>
-      <Bar have={have} need={need} />
-    </li>
-  );
-}
+        <p className="mt-0.5 max-w-[52ch] text-[13.5px] leading-relaxed text-mute">
+          {blurb}
+        </p>
 
-function TierBlock({ tier, open }: { tier: Tier; open: boolean }) {
-  return (
-    <li className="border-b border-rule py-4 last:border-b-0">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h3 className="flex items-baseline gap-2.5 text-[14px] font-medium">
-          <Stars earned={tier.stars} total={tier.stars} />
-          <span className={tier.met ? "text-mute" : ""}>{tier.name}</span>
-        </h3>
-        <span
-          className={`shrink-0 text-[13px] ${tier.met ? "text-sure" : "text-mute"}`}
-        >
-          {tier.met ? "earned" : open ? "working on this" : "after that"}
-        </span>
-      </div>
-
-      {open ? (
-        <>
-          <p className="mt-1 text-[13px] text-mute">{tier.blurb}</p>
-          <ul className="mt-2.5">
-            {tier.requirements.map((r, i) => (
-              <RequirementRow
-                key={`${r.activity}-${r.label}-${i}`}
-                requirement={r}
+        {!ladder.available ? (
+          <p className="mt-2 text-[13px] text-brass">{ladder.note}</p>
+        ) : ladder.remaining.length > 0 ? (
+          <>
+            <p className="mt-2 max-w-[58ch] text-[13.5px] leading-relaxed">
+              <span className="text-mute">Next star:</span>{" "}
+              {sentence(ladder.remaining)}.
+            </p>
+            <div
+              className="mt-2 h-[3px] w-full max-w-[58ch] overflow-hidden rounded-full bg-[var(--rule)]"
+              role="presentation"
+            >
+              <div
+                className="h-full rounded-full bg-ink"
+                style={{ width: `${pct}%` }}
               />
-            ))}
-          </ul>
-        </>
-      ) : null}
+            </div>
+          </>
+        ) : (
+          <p className="mt-2 text-[13.5px] text-mute">
+            Nothing left to earn here. Keep going as long as it is useful.
+          </p>
+        )}
+      </Link>
     </li>
   );
 }
 
-export function KitProgress({ mastery }: { mastery: Mastery }) {
-  const { stars, tiers, next, remaining } = mastery;
+const BLURBS: Record<string, string> = {
+  study: "Typed or multiple choice, marked and explained. Gets harder as you get better.",
+  cards: "Spaced repetition. Cards you miss come back sooner.",
+  test: "Multiple choice, marked at the end like a real paper.",
+};
 
+export function KitProgress({
+  mastery,
+  guideHref,
+  hasGuide,
+}: {
+  mastery: KitMastery;
+  guideHref: string;
+  hasGuide: boolean;
+}) {
   return (
-    <section className="rounded-sm border border-rule px-4 py-4 sm:px-5">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-5 gap-y-1">
-        {/* The heading names what has been earned; the open tier below names
-            what is being worked towards. Showing the same name twice made it
-            look like the chapter was already at that tier. */}
-        <h2 className="flex items-baseline gap-3 text-[15px] font-medium">
-          <Stars earned={stars} />
-          <span className={stars === 0 ? "text-mute" : undefined}>
-            {stars === 0 ? "Not started" : tiers[stars - 1].name}
-          </span>
-        </h2>
-        <span className="shrink-0 text-[13px] text-mute">
-          {stars} of {tiers.length} tiers
+    <section>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 border-b border-rule pb-2.5">
+        <h2 className="text-[13px] text-mute">Where this chapter stands</h2>
+        <span className="text-[13px] text-mute">
+          <span className="text-brass">{"★"}</span> {mastery.stars} of{" "}
+          {mastery.total} earned
         </span>
       </div>
 
-      {remaining.length > 0 ? (
-        <p className="mt-2 max-w-[62ch] text-[13.5px] leading-relaxed">
-          <span className="text-mute">To earn it:</span> {sentence(remaining)}.
-        </p>
-      ) : (
-        <p className="mt-2 max-w-[62ch] text-[13.5px] leading-relaxed text-mute">
-          Every tier earned. Nothing here expires, and the cards keep coming
-          back on their own schedule — carry on as long as you want to.
-        </p>
-      )}
-
-      <ul className="mt-3 border-t border-rule">
-        {tiers.map((tier) => (
-          <TierBlock
-            key={tier.stars}
-            tier={tier}
-            open={next ? tier.stars === next.stars : false}
+      <ul>
+        {mastery.ladders.map((ladder) => (
+          <FeatureRow
+            key={ladder.feature}
+            ladder={ladder}
+            blurb={BLURBS[ladder.feature]}
           />
         ))}
+
+        {/* The guide is reading, not practice, so it earns nothing. */}
+        <li className="border-b border-rule">
+          <Link
+            href={guideHref}
+            className="group flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 py-5"
+          >
+            <div className="min-w-0 max-w-[52ch]">
+              <h2 className="text-[16px] font-medium group-hover:underline group-hover:underline-offset-4">
+                Revision guide
+              </h2>
+              <p className="mt-0.5 text-[13.5px] leading-relaxed text-mute">
+                The material condensed, with the easily-confused pairs called
+                out.
+              </p>
+            </div>
+            <span
+              className={`shrink-0 text-[13px] ${hasGuide ? "text-mute" : "text-brass"}`}
+            >
+              {hasGuide ? "Ready to read" : "Write it"}
+            </span>
+          </Link>
+        </li>
       </ul>
     </section>
   );

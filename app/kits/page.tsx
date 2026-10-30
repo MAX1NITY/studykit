@@ -47,13 +47,12 @@ export default async function KitsPage() {
   const kits = (data ?? []) as KitOverview[];
   const totalDue = kits.reduce((n, k) => n + (k.due_count ?? 0), 0);
 
-  // Each kit is a chapter with its own three tiers, so the list shows where
-  // every chapter stands rather than only the one you last opened.
-  const stars = new Map<string, number>();
+  // Smart Study, flashcards and practice tests each earn three stars of their
+  // own, so the list carries the total rather than a single ladder.
+  const stars = new Map<string, { earned: number; total: number }>();
   for (const row of (progressRows ?? []) as KitProgressRow[]) {
-    stars.set(
-      row.id,
-      masteryOf({
+    const { stars: earned, total } = masteryOf(
+      {
         cards: row.cards,
         cardsSeen: row.cards_seen,
         cardsPassed: row.cards_passed,
@@ -62,8 +61,10 @@ export default async function KitsPage() {
         hardCorrect: row.hard_correct,
         tests: row.tests,
         bestTestPercent: row.best_test_percent,
-      }).stars,
+      },
+      row.id,
     );
+    stars.set(row.id, { earned, total });
   }
 
   return (
@@ -139,22 +140,16 @@ export default async function KitsPage() {
                           {kit.title}
                         </span>
                         <span
-                          className="inline-flex gap-0.5 text-[13px] leading-none"
-                          aria-label={`${stars.get(kit.id) ?? 0} of 3 tiers earned`}
+                          className="shrink-0 text-[13px] text-mute"
+                          aria-label={`${stars.get(kit.id)?.earned ?? 0} of ${stars.get(kit.id)?.total ?? 9} stars earned`}
                         >
-                          {[0, 1, 2].map((i) => (
-                            <span
-                              key={i}
-                              aria-hidden
-                              className={
-                                i < (stars.get(kit.id) ?? 0)
-                                  ? "text-brass"
-                                  : "text-[var(--rule)]"
-                              }
-                            >
-                              {i < (stars.get(kit.id) ?? 0) ? "\u2605" : "\u2606"}
-                            </span>
-                          ))}
+                          <span aria-hidden className="text-brass">
+                            {"\u2605"}
+                          </span>{" "}
+                          <span aria-hidden>
+                            {stars.get(kit.id)?.earned ?? 0}/
+                            {stars.get(kit.id)?.total ?? 9}
+                          </span>
                         </span>
                       </h2>
                       <p className="mt-0.5 text-[13px] text-mute">

@@ -1,16 +1,21 @@
 /**
- * How far through a kit you are, as three earned tiers.
+ * Three stars on each way of studying, earned separately.
  *
- * A kit is one chapter, so the tiers belong to the kit and never reset: the
- * work sits there until it is done. The point is to replace "two questions
- * felt like enough" with a requirement that does not move — and the
- * requirements are deliberately not pure volume, because a target you can
- * reach by grinding wrong answers is not a target. Each tier asks for the
- * work *and* for the accuracy that shows the work landed.
+ * Smart Study, flashcards and practice tests each have their own ladder,
+ * because they are different skills and being good at one says little about
+ * the others: recognising a card is not the same as answering cold, and
+ * neither is the same as sitting a timed paper. One shared ladder would also
+ * let a strong night on cards carry a feature you had not opened.
  *
- * Nothing here closes off at the top. Passing the last tier leaves the
- * counts running, and spaced repetition keeps handing cards back, so there
- * is always more to do rather than a finish line that ends the session.
+ * A kit is one chapter, so the stars belong to the kit and never reset — the
+ * work sits there until it is done. The requirements are deliberately not
+ * pure volume, because a target you can reach by grinding wrong answers is
+ * not a target: the upper stars ask for the work *and* for the accuracy that
+ * shows the work landed.
+ *
+ * Nothing closes off at the top. Past the third star the counts keep running
+ * and spaced repetition keeps handing cards back, so there is always more to
+ * do rather than a finish line that ends the session.
  */
 
 export interface KitProgress {
@@ -26,48 +31,55 @@ export interface KitProgress {
   recentScores: number[];
   /** Answers scoring 70+ on questions at difficulty 4 or 5. */
   hardCorrect: number;
-  /**
-   * Practice tests finished. The tiers judge the best score rather than the
-   * count — one strong paper on a chapter is a fair signal, and asking for
-   * several would be grind rather than evidence.
-   */
+  /** Practice tests finished. */
   tests: number;
   /** Best practice test, as a percentage. */
   bestTestPercent: number | null;
 }
 
-export type Activity = "cards" | "questions" | "test";
+export type Feature = "study" | "cards" | "test";
 
 export interface Requirement {
-  activity: Activity;
   label: string;
   have: number;
   need: number;
   unit: "count" | "percent";
   met: boolean;
-  /** Set when this tier asks nothing of this activity. */
-  idle?: boolean;
 }
 
 export interface Tier {
   stars: number;
   name: string;
-  blurb: string;
   requirements: Requirement[];
   met: boolean;
 }
 
-export interface Mastery {
+export interface Ladder {
+  feature: Feature;
+  name: string;
+  href: string;
   stars: number;
   tiers: Tier[];
   /** The tier being worked towards, or null once all three are earned. */
   next: Tier | null;
   /** What is still missing from the next tier, in words. */
   remaining: string[];
+  /** False when the kit has nothing for this feature to work on. */
+  available: boolean;
+  /** Why it is unavailable, when it is. */
+  note?: string;
+}
+
+export interface KitMastery {
+  ladders: Ladder[];
+  /** Stars earned across every available ladder. */
+  stars: number;
+  /** Stars on offer: three per available ladder. */
+  total: number;
 }
 
 /*
- * How many questions a tier asks for, scaled to the size of the chapter.
+ * How many questions a star asks for, scaled to the size of the chapter.
  *
  * A fixed number would be trivial on a long chapter and punishing on a short
  * one. The range keeps it inside what a single sitting can absorb, since a
@@ -88,32 +100,67 @@ export function recentAccuracy(
   return Math.round(recent.reduce((n, s) => n + s, 0) / recent.length);
 }
 
-const need = (
-  activity: Activity,
+const req = (
   label: string,
   have: number,
-  target: number,
+  need: number,
   unit: Requirement["unit"] = "count",
 ): Requirement => ({
-  activity,
   label,
-  have: Math.min(have, target),
-  need: target,
+  have: Math.min(have, need),
+  need,
   unit,
-  met: have >= target,
+  met: have >= need,
 });
 
-const idle = (activity: Activity, label: string): Requirement => ({
-  activity,
-  label,
-  have: 0,
-  need: 0,
-  unit: "count",
-  met: true,
-  idle: true,
-});
+/** Marks each tier earned only once every tier below it is. */
+function settle(tiers: Tier[]): number {
+  let earned = 0;
+  for (const tier of tiers) {
+    tier.met =
+      tier.requirements.every((r) => r.met) && earned === tier.stars - 1;
+    if (tier.met) earned = tier.stars;
+  }
+  return earned;
+}
 
-export function masteryOf(progress: KitProgress): Mastery {
+function build(
+  feature: Feature,
+  name: string,
+  href: string,
+  tiers: Tier[],
+  unavailable?: string,
+): Ladder {
+  if (unavailable) {
+    return {
+      feature,
+      name,
+      href,
+      stars: 0,
+      tiers,
+      next: null,
+      remaining: [],
+      available: false,
+      note: unavailable,
+    };
+  }
+
+  const stars = settle(tiers);
+  const next = tiers.find((t) => !t.met) ?? null;
+
+  return {
+    feature,
+    name,
+    href,
+    stars,
+    tiers,
+    next,
+    remaining: next ? describeGap(next) : [],
+    available: true,
+  };
+}
+
+export function masteryOf(progress: KitProgress, kitId: string): KitMastery {
   const {
     cards,
     cardsSeen,
@@ -121,104 +168,130 @@ export function masteryOf(progress: KitProgress): Mastery {
     answered,
     recentScores,
     hardCorrect,
+    tests,
     bestTestPercent,
   } = progress;
 
   const q = questionTarget(cards);
-  const window = q;
-  const accuracy = recentAccuracy(recentScores, window) ?? 0;
+  const accuracy = recentAccuracy(recentScores, q) ?? 0;
   const best = bestTestPercent ?? 0;
 
   /*
-   * A kit with no flashcards is not stuck at nought stars. Smart Study works
-   * without a deck, so an absent deck asks nothing rather than blocking every
-   * tier forever.
+   * Smart Study.
+   *
+   * The first star is just turning up: answer the questions. The second and
+   * third ask for accuracy too, and the third for answers right at the top of
+   * the difficulty range — which the difficulty picker only serves once you
+   * are sustaining 80%, so it cannot be ground out on easy questions.
    */
-  const hasCards = cards > 0;
-  const solidCards = Math.ceil(cards * 0.8);
-
-  const tiers: Tier[] = [
+  const study = build("study", "Smart Study", `/kits/${kitId}/study`, [
     {
       stars: 1,
-      name: "Covered",
-      blurb: "You have been through the whole chapter once.",
-      requirements: [
-        hasCards
-          ? need("cards", "Every card seen", cardsSeen, cards)
-          : idle("cards", "No deck in this kit"),
-        need("questions", "Questions answered", answered, q),
-        idle("test", "Not needed yet"),
-      ],
+      name: "Answered",
+      requirements: [req("Questions answered", answered, q)],
       met: false,
     },
     {
       stars: 2,
-      name: "Solid",
-      blurb: "You are getting it right, not just getting through it.",
+      name: "Getting them right",
       requirements: [
-        hasCards
-          ? need("cards", "Cards passed", cardsPassed, solidCards)
-          : idle("cards", "No deck in this kit"),
-        need("questions", "Questions answered", answered, q * 2),
-        need("test", "Best test", best, 60, "percent"),
+        req("Questions answered", answered, q * 2),
+        req("Recent accuracy", accuracy, 70, "percent"),
       ],
       met: false,
     },
     {
       stars: 3,
-      name: "Exam ready",
-      blurb: "You are getting it right when the questions get harder.",
+      name: "Right when it is hard",
       requirements: [
-        hasCards
-          ? need("cards", "Every card passed", cardsPassed, cards)
-          : idle("cards", "No deck in this kit"),
-        need("questions", "Questions answered", answered, q * 3),
-        need("test", "Best test", best, 85, "percent"),
+        req("Questions answered", answered, q * 3),
+        req("Recent accuracy", accuracy, 85, "percent"),
+        req("Right at difficulty 4+", hardCorrect, 3),
       ],
       met: false,
     },
-  ];
+  ]);
 
   /*
-   * Accuracy gates the upper two tiers, measured over recent answers rather
-   * than all time. Judging a whole kit by a shaky start would mean an early
-   * bad run locks the top tier away however well you are doing now, which
-   * punishes exactly the improvement the tier is supposed to recognise.
+   * Flashcards.
+   *
+   * A lapse resets repetitions to 0, so "passed" means passed and not failed
+   * since — which is why the third star is reachable in a sitting without
+   * waiting days for intervals to mature, but still means nothing is
+   * currently broken.
    */
-  tiers[1].requirements.splice(
-    2,
-    0,
-    need("questions", "Recent accuracy", accuracy, 70, "percent"),
-  );
-  tiers[2].requirements.splice(
-    2,
-    0,
-    need("questions", "Recent accuracy", accuracy, 85, "percent"),
-    need("questions", "Right at difficulty 4+", hardCorrect, 3),
+  const deck = build(
+    "cards",
+    "Flashcards",
+    `/kits/${kitId}/cards`,
+    [
+      {
+        stars: 1,
+        name: "Seen",
+        requirements: [req("Every card seen", cardsSeen, Math.max(cards, 1))],
+        met: false,
+      },
+      {
+        stars: 2,
+        name: "Mostly sticking",
+        requirements: [
+          req("Cards passed", cardsPassed, Math.max(Math.ceil(cards * 0.8), 1)),
+        ],
+        met: false,
+      },
+      {
+        stars: 3,
+        name: "All of it sticking",
+        requirements: [
+          req("Every card passed", cardsPassed, Math.max(cards, 1)),
+        ],
+        met: false,
+      },
+    ],
+    cards === 0 ? "This kit has no deck yet." : undefined,
   );
 
-  // A tier is earned only once every tier below it is.
-  let earned = 0;
-  for (const tier of tiers) {
-    tier.met =
-      tier.requirements.every((r) => r.met) && earned === tier.stars - 1;
-    if (tier.met) earned = tier.stars;
-  }
+  /*
+   * Practice tests.
+   *
+   * Judged on the best paper rather than the count: one strong paper on a
+   * chapter is fair evidence, and asking for several would be grind.
+   */
+  const paper = build("test", "Practice test", `/kits/${kitId}/test`, [
+    {
+      stars: 1,
+      name: "Sat one",
+      requirements: [req("Tests finished", tests, 1)],
+      met: false,
+    },
+    {
+      stars: 2,
+      name: "Passing",
+      requirements: [req("Best test", best, 70, "percent")],
+      met: false,
+    },
+    {
+      stars: 3,
+      name: "Comfortably",
+      requirements: [req("Best test", best, 85, "percent")],
+      met: false,
+    },
+  ]);
 
-  const next = tiers.find((t) => !t.met) ?? null;
+  const ladders = [study, deck, paper];
+  const available = ladders.filter((l) => l.available);
 
   return {
-    stars: earned,
-    tiers,
-    next,
-    remaining: next ? describeGap(next) : [],
+    ladders,
+    stars: available.reduce((n, l) => n + l.stars, 0),
+    total: available.length * 3,
   };
 }
 
 /** The outstanding requirements of a tier, phrased as things left to do. */
 function describeGap(tier: Tier): string[] {
   return tier.requirements
-    .filter((r) => !r.met && !r.idle)
+    .filter((r) => !r.met)
     .map((r) => {
       const short = r.need - r.have;
       switch (r.label) {
@@ -233,6 +306,8 @@ function describeGap(tier: Tier): string[] {
           return `lift your recent accuracy to ${r.need}% (now ${r.have}%)`;
         case "Right at difficulty 4+":
           return `get ${short} more right at difficulty 4 or 5`;
+        case "Tests finished":
+          return `sit a practice test`;
         case "Best test":
           return r.have === 0
             ? `sit a practice test and score ${r.need}%`
