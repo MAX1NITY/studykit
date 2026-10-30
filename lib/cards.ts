@@ -12,10 +12,17 @@ export interface DueCard {
   repetitions: number;
   lapses: number;
   due_at: string;
+  last_reviewed_at: string | null;
 }
 
+/*
+ * last_reviewed_at comes along so the review screen can tell a card it has
+ * seen from one it has not using exactly the column the progress view counts.
+ * It used to infer that from repetitions, which disagrees the moment a card
+ * lapses and resets them to zero.
+ */
 const COLUMNS =
-  "id, front, back, concept, ease, interval_days, repetitions, lapses, due_at";
+  "id, front, back, concept, ease, interval_days, repetitions, lapses, due_at, last_reviewed_at";
 
 /** How many cards one sitting loads at a time. */
 export const SESSION_LIMIT = 60;

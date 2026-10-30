@@ -79,15 +79,20 @@ export interface KitMastery {
 }
 
 /*
- * How many questions a star asks for, scaled to the size of the chapter.
+ * How many questions the first star asks for, scaled to the chapter.
  *
- * A fixed number would be trivial on a long chapter and punishing on a short
- * one. The range keeps it inside what a single sitting can absorb, since a
- * kit is a chapter and a chapter is usually one evening.
+ * The card count stands in for how many distinct facts a chapter holds, so
+ * the target follows it. The floor matters more than the formula: nobody
+ * learns a chapter in five questions, and a floor that low made the first
+ * star meaningless on a short deck. Fifteen is the least that is worth
+ * calling a pass through the material, and the cap keeps a very long chapter
+ * from asking for a number no sitting could reach.
+ *
+ * The second and third stars ask for twice and three times this.
  */
 export function questionTarget(cards: number): number {
-  const scaled = cards > 0 ? Math.round(cards / 8) : 8;
-  return Math.min(Math.max(scaled, 5), 12);
+  const scaled = cards > 0 ? Math.round(cards / 4) : 15;
+  return Math.min(Math.max(scaled, 15), 30);
 }
 
 /** Accuracy over the most recent answers, or null if there are none. */

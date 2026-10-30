@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Notice } from "@/components/chrome";
+import { StarStrip } from "@/components/star-strip";
+import { masteryOf, type KitProgress } from "@/lib/mastery";
 import { postJSON } from "@/lib/fetch-json";
 
 interface Question {
@@ -23,7 +25,14 @@ type Phase = "setup" | "building" | "sitting" | "marked";
 
 const LETTERS = ["A", "B", "C", "D", "E", "F"];
 
-export function PracticeTest({ kitId }: { kitId: string }) {
+export function PracticeTest({
+  kitId,
+  startingProgress,
+}: {
+  kitId: string;
+  /** This kit's standing when the page loaded; counted on from here. */
+  startingProgress: KitProgress;
+}) {
   const [phase, setPhase] = useState<Phase>("setup");
   const [count, setCount] = useState(10);
   const [testId, setTestId] = useState<string | null>(null);
@@ -37,6 +46,7 @@ export function PracticeTest({ kitId }: { kitId: string }) {
   );
 
   const [marking, setMarking] = useState(false);
+  const [progress, setProgress] = useState<KitProgress>(startingProgress);
 
   const startedAt = useRef<number | null>(null);
   // One paper at a time. Racing "Start the test" used to create several
@@ -143,11 +153,28 @@ export function PracticeTest({ kitId }: { kitId: string }) {
     }
 
     clearSaved(kitId);
+
+    // A finished paper is what the test stars are earned on, so they move as
+    // soon as it is marked rather than on the next page load.
+    const percent = questions.length
+      ? Math.round((result.data.score / questions.length) * 100)
+      : 0;
+    setProgress((p) => ({
+      ...p,
+      tests: p.tests + 1,
+      bestTestPercent: Math.max(p.bestTestPercent ?? 0, percent),
+    }));
+
     setResults(result.data.results);
     setScore(result.data.score);
     setPhase("marked");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
+
+  // The practice-test ladder only; the other two are earned on their pages.
+  const ladder = masteryOf(progress, kitId).ladders.find(
+    (l) => l.feature === "test",
+  )!;
 
   const answered = responses.filter((r) => r !== null).length;
 
@@ -161,6 +188,10 @@ export function PracticeTest({ kitId }: { kitId: string }) {
             rather than question by question. The wrong options are written to
             be tempting, so read them properly.
           </p>
+
+          <div className="mt-6 border-y border-rule py-2.5">
+            <StarStrip ladder={ladder} />
+          </div>
 
           <div className="mt-8">
             <label htmlFor="count" className="text-[13px] text-mute">
@@ -357,29 +388,34 @@ export function PracticeTest({ kitId }: { kitId: string }) {
               ) : null}
             </div>
           ) : (
-            <div className="mt-8 flex flex-wrap gap-3 border-t border-rule pt-6">
-              <button
-                onClick={() => {
-                  clearSaved(kitId);
-                  setPhase("setup");
-                  setResults(null);
-                  setScore(null);
-                  setElapsed(0);
-                  setTestId(null);
-                  setQuestions([]);
-                }
-                }
-                className="min-h-[44px] rounded-sm bg-ink px-4 py-2 text-[14px] font-medium text-bg"
-              >
-                Take another
-              </button>
-              <Link
-                href={`/kits/${kitId}`}
-                className="flex min-h-[44px] items-center rounded-sm border border-rule px-4 py-2 text-[14px] font-medium"
-              >
-                Back to kit
-              </Link>
-            </div>
+            <>
+              <div className="mt-8 border-t border-rule pt-5">
+                <StarStrip ladder={ladder} />
+              </div>
+
+              <div className="mt-6 flex flex-wrap gap-3">
+                <button
+                  onClick={() => {
+                    clearSaved(kitId);
+                    setPhase("setup");
+                    setResults(null);
+                    setScore(null);
+                    setElapsed(0);
+                    setTestId(null);
+                    setQuestions([]);
+                  }}
+                  className="min-h-[44px] rounded-sm bg-ink px-4 py-2 text-[14px] font-medium text-bg"
+                >
+                  Take another
+                </button>
+                <Link
+                  href={`/kits/${kitId}`}
+                  className="flex min-h-[44px] items-center rounded-sm border border-rule px-4 py-2 text-[14px] font-medium"
+                >
+                  Back to kit
+                </Link>
+              </div>
+            </>
           )}
         </>
       ) : null}

@@ -31,10 +31,17 @@ const blank = (over = {}) => ({
 const ladder = (m, feature) => m.ladders.find((l) => l.feature === feature);
 
 // --- targets scale with the chapter ---------------------------------------
-assert.equal(questionTarget(96), 12, "a long chapter caps at 12");
-assert.equal(questionTarget(8), 5, "a short chapter floors at 5");
-assert.equal(questionTarget(80), 10, "80 cards -> 10");
-assert.equal(questionTarget(0), 8, "a kit with no deck still asks for some");
+// The floor is the point: nobody learns a chapter in five questions, so a
+// short deck must still ask for a real pass through the material.
+assert.equal(questionTarget(8), 15, "a short chapter still asks for fifteen");
+assert.equal(questionTarget(20), 15, "and so does a twenty-card one");
+assert.equal(questionTarget(96), 24, "96 cards -> 24");
+assert.equal(questionTarget(200), 30, "a very long chapter caps at 30");
+assert.equal(questionTarget(0), 15, "a kit with no deck still asks for some");
+assert.ok(
+  questionTarget(20) >= 15,
+  "no chapter should ever ask for fewer than fifteen",
+);
 
 // --- three separate ladders ----------------------------------------------
 {
@@ -68,8 +75,8 @@ assert.equal(questionTarget(0), 8, "a kit with no deck still asks for some");
 {
   const m = masteryOf(
     blank({
-      answered: 36,
-      recentScores: Array(12).fill(92),
+      answered: 72,
+      recentScores: Array(24).fill(92),
       hardCorrect: 4,
     }),
     KIT,
@@ -82,19 +89,19 @@ assert.equal(questionTarget(0), 8, "a kit with no deck still asks for some");
 // --- Smart Study: the climb ----------------------------------------------
 {
   const one = masteryOf(
-    blank({ answered: 12, recentScores: Array(12).fill(40) }),
+    blank({ answered: 24, recentScores: Array(24).fill(40) }),
     KIT,
   );
   assert.equal(ladder(one, "study").stars, 1, "turning up earns the first");
 
   const two = masteryOf(
-    blank({ answered: 24, recentScores: Array(12).fill(75) }),
+    blank({ answered: 48, recentScores: Array(24).fill(75) }),
     KIT,
   );
   assert.equal(ladder(two, "study").stars, 2);
 
   const three = masteryOf(
-    blank({ answered: 36, recentScores: Array(12).fill(90), hardCorrect: 3 }),
+    blank({ answered: 72, recentScores: Array(24).fill(90), hardCorrect: 3 }),
     KIT,
   );
   assert.equal(ladder(three, "study").stars, 3);
@@ -128,13 +135,23 @@ assert.equal(questionTarget(0), 8, "a kit with no deck still asks for some");
     KIT,
   );
   assert.equal(ladder(m, "study").stars, 0, "four answers is not a chapter");
+
+  const five = masteryOf(
+    blank({ answered: 5, recentScores: Array(5).fill(100), hardCorrect: 9 }),
+    KIT,
+  );
+  assert.equal(
+    ladder(five, "study").stars,
+    0,
+    "five perfect answers is not learning a chapter either",
+  );
 }
 
 // --- AN EARLY BAD RUN MUST NOT LOCK THE TOP STAR AWAY ------------------
 {
-  const scores = [...Array(12).fill(92), ...Array(50).fill(25)];
+  const scores = [...Array(24).fill(92), ...Array(60).fill(25)];
   const m = masteryOf(
-    blank({ answered: 62, recentScores: scores, hardCorrect: 4 }),
+    blank({ answered: 84, recentScores: scores, hardCorrect: 4 }),
     KIT,
   );
   assert.equal(
@@ -167,8 +184,8 @@ assert.equal(questionTarget(0), 8, "a kit with no deck still asks for some");
   const m = masteryOf(
     blank({
       cards: 0,
-      answered: 24,
-      recentScores: Array(8).fill(95),
+      answered: 45,
+      recentScores: Array(15).fill(95),
       hardCorrect: 5,
       tests: 2,
       bestTestPercent: 95,

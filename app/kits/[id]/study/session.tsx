@@ -8,6 +8,8 @@ import {
   useSyncExternalStore,
 } from "react";
 import { Notice } from "@/components/chrome";
+import { StarStrip } from "@/components/star-strip";
+import { masteryOf, type KitProgress } from "@/lib/mastery";
 import { postJSON, type ApiFailure } from "@/lib/fetch-json";
 
 type Format = "choice" | "written" | "mixed";
@@ -111,10 +113,13 @@ const serverModifier = () => "Ctrl";
 export function SmartStudy({
   kitId,
   initialQuestion = null,
+  startingProgress,
 }: {
   kitId: string;
   /** Served with the page, so the first question needs no round trip. */
   initialQuestion?: Question | null;
+  /** This kit's standing when the page loaded; counted on from here. */
+  startingProgress: KitProgress;
 }) {
   const [format, setFormat] = useState<Format>("choice");
   const [question, setQuestion] = useState<Question | null>(initialQuestion);
@@ -142,6 +147,24 @@ export function SmartStudy({
   );
 
   const [ready, setReady] = useState<number | null>(null);
+
+  /*
+   * The kit's standing, kept up to date as answers land.
+   *
+   * Recomputed here rather than re-fetched: the server already sent the
+   * starting point, and every answer's effect on it is known locally, so the
+   * stars move the instant a question is marked instead of after a reload.
+   */
+  const [progress, setProgress] = useState<KitProgress>(startingProgress);
+
+  const recordAnswer = useCallback((score: number, difficulty: number) => {
+    setProgress((p) => ({
+      ...p,
+      answered: p.answered + 1,
+      recentScores: [score, ...p.recentScores].slice(0, 20),
+      hardCorrect: p.hardCorrect + (score >= 70 && difficulty >= 4 ? 1 : 0),
+    }));
+  }, []);
 
   /*
    * The question after this one, fetched while the student reads the verdict.
@@ -313,11 +336,12 @@ export function SmartStudy({
     else {
       setVerdict(result.data);
       setHistory((h) => [...h, result.data.score]);
+      recordAnswer(result.data.score, question.difficulty);
       lookAhead(format);
     }
 
     setMarking(false);
-  }, [answer, marking, question, lookAhead, format]);
+  }, [answer, marking, question, lookAhead, format, recordAnswer]);
 
   /** A chosen option is marked by comparison on the server: no AI, no wait. */
   const submitChoice = useCallback(
@@ -336,12 +360,13 @@ export function SmartStudy({
       else {
         setVerdict(result.data);
         setHistory((h) => [...h, result.data.score]);
+        recordAnswer(result.data.score, question.difficulty);
         lookAhead(format);
       }
 
       setMarking(false);
     },
-    [marking, question, verdict, lookAhead, format],
+    [marking, question, verdict, lookAhead, format, recordAnswer],
   );
 
   // Put the cursor in the answer box as soon as a written question arrives.
@@ -410,6 +435,11 @@ export function SmartStudy({
     return () => window.removeEventListener("keydown", onKey);
   }, [loadQuestion, marking, question, submitChoice, submitWritten, verdict]);
 
+  // The Smart Study ladder only; the other two are earned on their own pages.
+  const ladder = masteryOf(progress, kitId).ladders.find(
+    (l) => l.feature === "study",
+  )!;
+
   const average = history.length
     ? Math.round(history.reduce((a, b) => a + b, 0) / history.length)
     : null;
@@ -439,7 +469,7 @@ export function SmartStudy({
       </div>
 
       {/* Status: difficulty, what is being targeted, session score. */}
-      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-y border-rule py-2.5 text-[13px]">
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-t border-rule py-2.5 text-[13px]">
         <div className="flex items-center gap-3">
           <span className="text-mute">Difficulty</span>
           <span
@@ -493,6 +523,12 @@ export function SmartStudy({
           </span>
           ) : null}
         </span>
+      </div>
+
+      {/* The stars, where the answering happens. Seeing progress only on the
+          kit page meant leaving the thing it was measuring. */}
+      <div className="border-y border-rule py-2.5">
+        <StarStrip ladder={ladder} />
       </div>
 
       {error ? (

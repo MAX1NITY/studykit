@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { getJSON, postJSON } from "@/lib/fetch-json";
 import { Notice } from "@/components/chrome";
+import { StarStrip } from "@/components/star-strip";
+import { masteryOf, type KitProgress } from "@/lib/mastery";
 import {
   RELEARN_MINUTES,
   formatInterval,
@@ -22,6 +24,7 @@ export interface Card {
   repetitions: number;
   lapses: number;
   due_at: string;
+  last_reviewed_at: string | null;
 }
 
 /** A card that was failed and is waiting out its relearning delay. */
@@ -56,11 +59,14 @@ export function CardReview({
   initialQueue,
   initialRelearn,
   initialMore,
+  startingProgress,
 }: {
   kitId: string;
   initialQueue: Card[];
   initialRelearn: Card[];
   initialMore: boolean;
+  /** This kit's standing when the page loaded; counted on from here. */
+  startingProgress: KitProgress;
 }) {
   const [queue, setQueue] = useState<Card[]>(initialQueue);
   const [relearn, setRelearn] = useState<Waiting[]>(() =>
@@ -72,6 +78,15 @@ export function CardReview({
   const [finished, setFinished] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(() => Date.now());
+
+  /*
+   * The deck's standing, kept up to date as cards are graded.
+   *
+   * A card counts as seen once it has any history at all, and as passed while
+   * its repetitions are above zero — a lapse resets those to zero, which is
+   * exactly the "passed, and not failed since" the stars mean.
+   */
+  const [progress, setProgress] = useState<KitProgress>(startingProgress);
 
   // Grading is in-flight per card id. Without this, two activations of the
   // same card shift the *next*, unseen card off the queue and count it as
@@ -94,6 +109,19 @@ export function CardReview({
       const id = card.id;
       const next = review(card, chosen);
       const lapsed = chosen === "again";
+
+      // The same test the progress view uses, so the two never disagree.
+      // Loose on purpose: an unreviewed card reads as null from Postgres, but
+      // as undefined if the column is ever absent from the row, and a strict
+      // check would then count a brand-new card as already seen.
+      const wasSeen = card.last_reviewed_at != null;
+      const wasPassed = card.repetitions > 0;
+      setProgress((p) => ({
+        ...p,
+        cardsSeen: p.cardsSeen + (wasSeen ? 0 : 1),
+        cardsPassed:
+          p.cardsPassed + (lapsed ? 0 : 1) - (wasPassed ? 1 : 0),
+      }));
 
       setRevealed(false);
       setQueue((q) => q.filter((c) => c.id !== id));
@@ -121,6 +149,12 @@ export function CardReview({
       // back rather than leaving the student believing it was recorded.
       if (!result.ok) {
         setError(result.error.title);
+        setProgress((p) => ({
+          ...p,
+          cardsSeen: p.cardsSeen - (wasSeen ? 0 : 1),
+          cardsPassed:
+            p.cardsPassed - (lapsed ? 0 : 1) + (wasPassed ? 1 : 0),
+        }));
         setRelearn((r) => r.filter((w) => w.card.id !== id));
         setQueue((q) => (q.some((c) => c.id === id) ? q : [card, ...q]));
         if (!lapsed && doneIdsRef.current.delete(id)) {
@@ -206,6 +240,11 @@ export function CardReview({
     })();
   }, [card, pending.length, more, kitId]);
 
+  // The flashcard ladder only; the other two are earned on their own pages.
+  const ladder = masteryOf(progress, kitId).ladders.find(
+    (l) => l.feature === "cards",
+  )!;
+
   const previews = card ? previewIntervals(card) : null;
   const left = queue.length + relearn.length;
   const soonest = pending.length
@@ -237,6 +276,11 @@ export function CardReview({
             ) : null}
           </span>
         ) : null}
+      </div>
+
+      {/* The stars, where the reviewing happens. */}
+      <div className="border-b border-rule py-2.5">
+        <StarStrip ladder={ladder} />
       </div>
 
       {error ? (
