@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { TopBar, Stat } from "@/components/chrome";
+import { masteryOf } from "@/lib/mastery";
 import { since } from "@/lib/format";
 
 export const metadata = { title: "Your kits · StudyKit" };
@@ -17,19 +18,53 @@ interface KitOverview {
   last_attempt_at: string | null;
 }
 
+interface KitProgressRow {
+  id: string;
+  cards: number;
+  cards_seen: number;
+  cards_passed: number;
+  answered: number;
+  recent_scores: number[] | null;
+  hard_correct: number;
+  tests: number;
+  best_test_percent: number | null;
+}
+
 export default async function KitsPage() {
   const session = await getSession();
   if (!session) redirect("/login");
 
-  const { data, error } = await session.supabase
-    .from("kit_overview")
-    .select(
-      "id, title, subject, card_count, due_count, answered_count, avg_score, last_attempt_at",
-    )
-    .order("created_at", { ascending: false });
+  const [{ data, error }, { data: progressRows }] = await Promise.all([
+    session.supabase
+      .from("kit_overview")
+      .select(
+        "id, title, subject, card_count, due_count, answered_count, avg_score, last_attempt_at",
+      )
+      .order("created_at", { ascending: false }),
+    session.supabase.from("kit_progress").select("*"),
+  ]);
 
   const kits = (data ?? []) as KitOverview[];
   const totalDue = kits.reduce((n, k) => n + (k.due_count ?? 0), 0);
+
+  // Each kit is a chapter with its own three tiers, so the list shows where
+  // every chapter stands rather than only the one you last opened.
+  const stars = new Map<string, number>();
+  for (const row of (progressRows ?? []) as KitProgressRow[]) {
+    stars.set(
+      row.id,
+      masteryOf({
+        cards: row.cards,
+        cardsSeen: row.cards_seen,
+        cardsPassed: row.cards_passed,
+        answered: row.answered,
+        recentScores: row.recent_scores ?? [],
+        hardCorrect: row.hard_correct,
+        tests: row.tests,
+        bestTestPercent: row.best_test_percent,
+      }).stars,
+    );
+  }
 
   return (
     <>
@@ -99,8 +134,28 @@ export default async function KitsPage() {
                     className="group flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 py-5"
                   >
                     <div className="min-w-0">
-                      <h2 className="read text-[20px] leading-snug group-hover:underline group-hover:underline-offset-4">
-                        {kit.title}
+                      <h2 className="read flex flex-wrap items-baseline gap-x-2.5 text-[20px] leading-snug">
+                        <span className="group-hover:underline group-hover:underline-offset-4">
+                          {kit.title}
+                        </span>
+                        <span
+                          className="inline-flex gap-0.5 text-[13px] leading-none"
+                          aria-label={`${stars.get(kit.id) ?? 0} of 3 tiers earned`}
+                        >
+                          {[0, 1, 2].map((i) => (
+                            <span
+                              key={i}
+                              aria-hidden
+                              className={
+                                i < (stars.get(kit.id) ?? 0)
+                                  ? "text-brass"
+                                  : "text-[var(--rule)]"
+                              }
+                            >
+                              {i < (stars.get(kit.id) ?? 0) ? "\u2605" : "\u2606"}
+                            </span>
+                          ))}
+                        </span>
                       </h2>
                       <p className="mt-0.5 text-[13px] text-mute">
                         {kit.subject ?? "No subject"}

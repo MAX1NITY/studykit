@@ -4,6 +4,8 @@ import { getSession } from "@/lib/auth";
 import { TopBar } from "@/components/chrome";
 import { DeleteKit } from "./danger";
 import { GenerateCards } from "./cards-action";
+import { KitProgress } from "./progress";
+import { masteryOf, type KitProgress as Progress } from "@/lib/mastery";
 import { since } from "@/lib/format";
 
 export default async function KitPage(props: PageProps<"/kits/[id]">) {
@@ -16,22 +18,35 @@ export default async function KitPage(props: PageProps<"/kits/[id]">) {
   if (!session) redirect("/login");
   const { supabase } = session;
 
-  const [{ data: kit }, { data: stats }, { data: sources }] = await Promise.all([
-    supabase.from("kit_overview").select("*").eq("id", id).maybeSingle(),
-    supabase
-      .from("concept_stats")
-      .select("concept, avg_score, attempt_count")
-      .eq("kit_id", id)
-      .order("avg_score", { ascending: true })
-      .limit(20),
-    supabase
-      .from("sources")
-      .select("name, kind, char_count")
-      .eq("kit_id", id)
-      .order("created_at"),
-  ]);
+  const [{ data: kit }, { data: progress }, { data: stats }, { data: sources }] =
+    await Promise.all([
+      supabase.from("kit_overview").select("*").eq("id", id).maybeSingle(),
+      supabase.from("kit_progress").select("*").eq("id", id).maybeSingle(),
+      supabase
+        .from("concept_stats")
+        .select("concept, avg_score, attempt_count")
+        .eq("kit_id", id)
+        .order("avg_score", { ascending: true })
+        .limit(20),
+      supabase
+        .from("sources")
+        .select("name, kind, char_count")
+        .eq("kit_id", id)
+        .order("created_at"),
+    ]);
 
   if (!kit) notFound();
+
+  const mastery = masteryOf({
+    cards: progress?.cards ?? 0,
+    cardsSeen: progress?.cards_seen ?? 0,
+    cardsPassed: progress?.cards_passed ?? 0,
+    answered: progress?.answered ?? 0,
+    recentScores: (progress?.recent_scores as number[] | null) ?? [],
+    hardCorrect: progress?.hard_correct ?? 0,
+    tests: progress?.tests ?? 0,
+    bestTestPercent: progress?.best_test_percent ?? null,
+  } satisfies Progress);
 
   const studied = since(kit.last_attempt_at as string | null);
   const weak = (stats ?? []).filter((s) => (s.avg_score ?? 100) < 70);
@@ -114,6 +129,10 @@ export default async function KitPage(props: PageProps<"/kits/[id]">) {
             ? ` · ${kit.source_count} source${kit.source_count === 1 ? "" : "s"}`
             : ""}
         </p>
+
+        <div className="mt-7">
+          <KitProgress mastery={mastery} />
+        </div>
 
         <ul className="mt-9 border-t border-rule">
           {modes.map((mode) => (
