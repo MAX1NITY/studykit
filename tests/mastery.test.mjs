@@ -149,9 +149,9 @@ assert.ok(
 
 // --- AN EARLY BAD RUN MUST NOT LOCK THE TOP STAR AWAY ------------------
 {
-  const scores = [...Array(24).fill(92), ...Array(60).fill(25)];
+  const scores = [...Array(40).fill(92), ...Array(60).fill(25)];
   const m = masteryOf(
-    blank({ answered: 84, recentScores: scores, hardCorrect: 4 }),
+    blank({ answered: 100, recentScores: scores, hardCorrect: 4 }),
     KIT,
   );
   assert.equal(
@@ -228,8 +228,71 @@ assert.ok(
 
 // --- recentAccuracy ----------------------------------------------------
 assert.equal(recentAccuracy([], 5), null, "no answers means no accuracy");
-assert.equal(recentAccuracy([100, 0], 2), 50);
-assert.equal(recentAccuracy([100, 100, 0, 0, 0], 2), 100, "newest only");
-assert.equal(recentAccuracy([90], 10), 90, "a short history is used as-is");
+assert.equal(recentAccuracy([90], 10), 90, "one answer is itself");
+assert.equal(recentAccuracy(Array(20).fill(100), 15), 100);
+assert.equal(recentAccuracy(Array(20).fill(0), 15), 0);
+
+// It leans on the newest answers: the same scores in the opposite order
+// must not give the same figure.
+{
+  const improving = [100, 100, 100, 0, 0, 0];
+  const declining = [0, 0, 0, 100, 100, 100];
+  assert.ok(
+    recentAccuracy(improving, 5) > recentAccuracy(declining, 5),
+    "getting better should read higher than getting worse",
+  );
+}
+
+// --- EVERY ANSWER MUST MOVE THE FIGURE ---------------------------------
+// This is the bug this replaced. A trailing mean only rose when the answer
+// dropping out of the window was wrong, so after a strong start a correct
+// answer changed nothing at all: replayed against a real session it read
+// 73 → 73 → 67 → 67, standing still on both of the correct answers.
+{
+  // That real session, newest first.
+  const history = [100, 0, 100, 0, 100, 0, 100, 0, 100, 100, 100, 100, 100, 100, 0, 100, 100, 100];
+  const now = recentAccuracy(history, 15);
+
+  assert.ok(
+    recentAccuracy([100, ...history], 15) > now,
+    "a correct answer must raise it",
+  );
+  assert.ok(
+    recentAccuracy([0, ...history], 15) < now,
+    "a wrong answer must lower it",
+  );
+
+  // And it must keep moving, not just on the first one. Close to full
+  // marks the steps fall below a whole percent and the displayed integer
+  // repeats, which is fine — the fault being guarded against is a figure
+  // that cannot move at all through the middle of the range.
+  let scores = history;
+  let previous = now;
+  for (let i = 0; i < 12; i += 1) {
+    scores = [100, ...scores];
+    const next = recentAccuracy(scores, 15);
+    assert.ok(next >= previous, `a correct answer lowered it: ${previous} -> ${next}`);
+    if (previous < 90) {
+      assert.ok(
+        next > previous,
+        `answer ${i + 1} of a correct run did not move it: ${previous} -> ${next}`,
+      );
+    }
+    previous = next;
+  }
+  assert.ok(previous > 90, `a long correct run should approach full marks, got ${previous}`);
+}
+
+// A bad run has to be recoverable, and recognisably so.
+{
+  const rough = Array(60).fill(25);
+  const recovered = [...Array(30).fill(100), ...rough];
+  const weighted = recentAccuracy(recovered, 24);
+  const allTime = Math.round(recovered.reduce((a, b) => a + b, 0) / recovered.length);
+  assert.ok(
+    weighted > allTime + 40,
+    `improvement should show strongly: weighted ${weighted} vs all-time ${allTime}`,
+  );
+}
 
 console.log("Per-feature stars: all assertions passed");

@@ -74,6 +74,9 @@ export async function POST(request: Request) {
             user_answer: options[choiceIndex],
             verdict: correct ? "correct" : "incorrect",
             score,
+            // When it was answered, not when it was written: the pool
+            // generates questions well before they are served.
+            answered_at: new Date().toISOString(),
           })
           .eq("id", attemptId);
       })();
@@ -112,6 +115,7 @@ export async function POST(request: Request) {
         verdict: grading.verdict,
         score: Math.min(Math.max(grading.score, 0), 100),
         explanation: grading.explanation,
+        answered_at: new Date().toISOString(),
       })
       .eq("id", attemptId);
 

@@ -103,7 +103,10 @@ export async function pickDifficulty(
     .select("score, difficulty")
     .eq("kit_id", kitId)
     .not("score", "is", null)
-    .order("created_at", { ascending: false })
+    // By when they were answered. Ordering by created_at meant adapting to
+    // whichever five questions were written most recently, which is not the
+    // five the student just did.
+    .order("answered_at", { ascending: false })
     .limit(5);
 
   const answered = data ?? [];
