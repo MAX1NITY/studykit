@@ -40,6 +40,7 @@ export function AddVideo({
   const [found, setFound] = useState<Found | null>(null);
   const [looking, setLooking] = useState(false);
   const [raw, setRaw] = useState("");
+  const [ownName, setOwnName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [hint, setHint] = useState<string | undefined>();
 
@@ -62,12 +63,16 @@ export function AddVideo({
     }
 
     setFound(result.data);
+    setOwnName("");
   }
 
   function add() {
     if (!cleaned?.text || !found) return;
 
-    const title = found.title ?? `YouTube video ${found.videoId}`;
+    // `||` not `??`: an empty name is a string, not nullish, and would
+    // otherwise win over the fallback.
+    const title =
+      found.title || ownName.trim() || `YouTube video ${found.videoId}`;
     const header = [
       `Transcript of the video "${title}"`,
       found.author ? `by ${found.author}` : null,
@@ -142,12 +147,32 @@ export function AddVideo({
 
       {found ? (
         <div className="mt-5 border-l-2 border-brass pl-4">
-          <p className="text-[15px] font-medium">
-            {found.title ?? "That video"}
-          </p>
-          {found.author ? (
-            <p className="text-[13px] text-mute">{found.author}</p>
-          ) : null}
+          {found.title ? (
+            <>
+              <p className="text-[15px] font-medium">{found.title}</p>
+              {found.author ? (
+                <p className="text-[13px] text-mute">{found.author}</p>
+              ) : null}
+            </>
+          ) : (
+            <>
+              {/* oEmbed answers for any public video, so an empty result
+                  usually means the link is wrong or the video is private.
+                  It can also just mean YouTube did not answer, and that is
+                  no reason to stop someone pasting a transcript they have
+                  in front of them — so this names it instead of blocking. */}
+              <p className="text-[14px] text-brass">
+                No title came back. Check the link is right — or if the video
+                is private or unlisted, just name it yourself.
+              </p>
+              <input
+                value={ownName}
+                onChange={(e) => setOwnName(e.target.value)}
+                placeholder="What is this video?"
+                className="writeline mt-2 w-full py-1.5 text-[15px] placeholder:text-mute/60"
+              />
+            </>
+          )}
 
           <ol className="mt-3 space-y-1 text-[13.5px] leading-relaxed text-mute">
             <li>
@@ -187,7 +212,12 @@ export function AddVideo({
             <button
               type="button"
               onClick={add}
-              disabled={!cleaned?.text || cleaned.text.length < 200 || busy}
+              disabled={
+                !cleaned?.text ||
+                cleaned.text.length < 200 ||
+                (!found.title && !ownName.trim()) ||
+                busy
+              }
               className="min-h-[40px] rounded-sm bg-ink px-4 py-1.5 text-[13px] font-medium text-bg disabled:opacity-40"
             >
               Add this video
