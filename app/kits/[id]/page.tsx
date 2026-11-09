@@ -5,7 +5,6 @@ import { TopBar } from "@/components/chrome";
 import { DeleteKit } from "./danger";
 import { GenerateCards } from "./cards-action";
 import { KitProgress } from "./progress";
-import { AddVideoToKit } from "./add-video";
 import { AddNotesToKit } from "./add-notes";
 import { masteryOf, type KitProgress as Progress } from "@/lib/mastery";
 import { since } from "@/lib/format";
@@ -146,9 +145,8 @@ export default async function KitPage(props: PageProps<"/kits/[id]">) {
           </section>
         ) : null}
 
-        <div className="mt-10 space-y-8 border-t border-rule pt-6">
+        <div className="mt-10 border-t border-rule pt-6">
           <AddNotesToKit kitId={id} />
-          <AddVideoToKit kitId={id} />
         </div>
 
         {sources?.length ? (
