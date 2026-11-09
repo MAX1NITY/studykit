@@ -71,3 +71,65 @@ for (const id of ["a_b-c_d-e_f", "___________", "-----------", "0123456789A"]) {
 }
 
 console.log("YouTube links: all assertions passed");
+
+// ---------------------------------------------------------------------------
+// Several links at once, which is how a chapter's worth of videos arrives.
+// ---------------------------------------------------------------------------
+const { findYouTubeIds } = await import("../lib/youtube-url.ts");
+
+const A = "dQw4w9WgXcQ";
+const B = "yOyaJXpAYZQ";
+const C = "5Hc3rsrqcmY";
+
+// Commas, newlines, spaces — and mixtures of them.
+assert.deepEqual(
+  findYouTubeIds(`https://youtu.be/${A}, https://youtu.be/${B}`),
+  [A, B],
+);
+assert.deepEqual(
+  findYouTubeIds(`https://www.youtube.com/watch?v=${A}\nhttps://youtu.be/${B}\n`),
+  [A, B],
+);
+assert.deepEqual(
+  findYouTubeIds(`https://youtu.be/${A} https://youtu.be/${B}  https://youtu.be/${C}`),
+  [A, B, C],
+);
+assert.deepEqual(
+  findYouTubeIds(`watch https://youtu.be/${A} first, then https://youtu.be/${B}.`),
+  [A, B],
+  "links embedded in a sentence should still be found",
+);
+
+// Order is kept, and a repeated link is only taken once.
+assert.deepEqual(
+  findYouTubeIds(`https://youtu.be/${B}, https://youtu.be/${A}, https://youtu.be/${B}`),
+  [B, A],
+);
+
+// A WORD IS NOT A VIDEO ID. Both of these are eleven characters.
+assert.deepEqual(findYouTubeIds("development networking"), []);
+assert.deepEqual(findYouTubeIds("Chapter 3 notes"), []);
+assert.deepEqual(
+  findYouTubeIds(`development, https://youtu.be/${A}, networking`),
+  [A],
+  "prose around a real link must not become ids",
+);
+
+// Nothing in, nothing out.
+assert.deepEqual(findYouTubeIds(""), []);
+assert.deepEqual(findYouTubeIds("https://example.com/a, https://vimeo.com/1"), []);
+
+console.log("YouTube links (several at once): all assertions passed");
+
+// Punctuation clinging to a link must not hide it.
+for (const wrapper of [
+  `https://youtu.be/${A}.`,
+  `(https://youtu.be/${A})`,
+  `"https://youtu.be/${A}",`,
+  `<https://youtu.be/${A}>`,
+  `https://youtu.be/${A}!`,
+]) {
+  assert.deepEqual(findYouTubeIds(wrapper), [A], `missed inside: ${wrapper}`);
+}
+
+console.log("YouTube links (punctuation): passed");

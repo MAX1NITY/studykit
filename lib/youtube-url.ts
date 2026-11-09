@@ -52,3 +52,33 @@ export function parseYouTubeId(input: string): string | null {
   );
   return match ? match[1] : null;
 }
+
+/**
+ * Every YouTube video in a blob of text, in the order they appear.
+ *
+ * People paste a whole chapter's worth of links at once, separated by
+ * commas, newlines, spaces, or just sitting in a sentence. Splitting on all
+ * of those and parsing each piece handles the lot.
+ *
+ * Bare eleven-character ids are deliberately NOT accepted here, only in the
+ * single-link case: "development" and "networking!" are both eleven
+ * characters, and silently treating a word in someone's notes as a video id
+ * is worse than making them paste a link.
+ */
+export function findYouTubeIds(text: string): string[] {
+  const seen = new Set<string>();
+
+  for (const raw of text.split(/[\s,;|]+/)) {
+    // A link at the end of a sentence carries the full stop with it, and
+    // brackets and quotes cling to both ends.
+    const token = raw.replace(/^[("'<\[]+/, "").replace(/[.,;:!?)"'>\]]+$/, "");
+
+    // A link, not a word: must look like a URL before it is parsed.
+    if (!token.includes("/") && !token.includes(".")) continue;
+
+    const id = parseYouTubeId(token);
+    if (id) seen.add(id);
+  }
+
+  return [...seen];
+}
