@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { extractFile, type Extracted } from "@/lib/extract";
+import { AddVideo, type VideoSource } from "@/components/add-video";
 import { postJSON, type ApiFailure } from "@/lib/fetch-json";
 import { Notice } from "@/components/chrome";
 
@@ -16,6 +17,7 @@ export function NewKitForm() {
   const [title, setTitle] = useState("");
   const [pasted, setPasted] = useState("");
   const [files, setFiles] = useState<Extracted[]>([]);
+  const [videos, setVideos] = useState<VideoSource[]>([]);
   const [cardCount, setCardCount] = useState(24);
 
   const [reading, setReading] = useState(false);
@@ -25,7 +27,9 @@ export function NewKitForm() {
   const building = stage !== "idle";
 
   const totalChars =
-    pasted.trim().length + files.reduce((n, f) => n + f.content.length, 0);
+    pasted.trim().length +
+    files.reduce((n, f) => n + f.content.length, 0) +
+    videos.reduce((n, v) => n + v.content.length, 0);
   const ready = totalChars >= MIN_CHARS && !building && !reading;
 
   async function addFiles(list: FileList | null) {
@@ -54,6 +58,7 @@ export function NewKitForm() {
 
     const sources = [
       ...files.map((f) => ({ name: f.name, kind: f.kind, content: f.content })),
+      ...videos,
       ...(pasted.trim()
         ? [{ name: "Pasted notes", kind: "note", content: pasted.trim() }]
         : []),
@@ -161,6 +166,39 @@ export function NewKitForm() {
                     type="button"
                     onClick={() =>
                       setFiles((current) => current.filter((_, n) => n !== i))
+                    }
+                    className="text-[13px] text-mute underline underline-offset-2 hover:text-mark"
+                  >
+                    Remove
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+
+      <div>
+        <AddVideo onAdd={(v) => setVideos((c) => [...c, v])} busy={building} />
+
+        {videos.length > 0 ? (
+          <ul className="mt-4 border-t border-rule">
+            {videos.map((video, i) => (
+              <li
+                key={`${video.name}-${i}`}
+                className="flex items-baseline justify-between gap-4 border-b border-rule py-2.5"
+              >
+                <span className="min-w-0 truncate text-[14px]">
+                  {video.name}
+                </span>
+                <span className="flex shrink-0 items-baseline gap-3">
+                  <span className="text-[13px] text-mute">
+                    {Math.round(video.content.length / 1000)}k characters
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setVideos((current) => current.filter((_, n) => n !== i))
                     }
                     className="text-[13px] text-mute underline underline-offset-2 hover:text-mark"
                   >
