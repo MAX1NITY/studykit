@@ -102,6 +102,24 @@ export default async function KitsPage() {
           </Link>
         </div>
 
+        {/* Exam prep is its own thing: one fixed syllabus, no stars, its own
+            tables. It gets a door of its own rather than a slot in the list. */}
+        <Link
+          href="/prep"
+          prefetch={false}
+          className="group mt-7 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 rounded-sm border border-rule px-4 py-3.5 hover:border-mute"
+        >
+          <span>
+            <span className="read text-[17px] group-hover:underline group-hover:underline-offset-4">
+              CompTIA A+ Core 1
+            </span>
+            <span className="ml-2 font-mono text-[12px] text-mute">220-1201</span>
+          </span>
+          <span className="text-[13px] text-mute">
+            Study questions and timed mock exams {"\u2192"}
+          </span>
+        </Link>
+
         {error ? (
           <p className="mt-10 border-l-2 border-mark pl-3 text-sm text-mark">
             {error.message}
