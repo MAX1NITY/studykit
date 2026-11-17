@@ -34,6 +34,7 @@ interface Result {
   stalled?: boolean;
   throttled?: boolean;
   lastError?: string | null;
+  reasons?: { reason: string; count: number }[];
 }
 
 /**
@@ -124,16 +125,15 @@ export function PoolBuilder() {
 
         if (result.data.saved === 0) {
           stalls += 1;
+          const why = describe(result.data);
           if (stalls >= MAX_STALLS) {
             setError({
               title: "Question writing has stopped making progress.",
-              hint:
-                result.data.lastError ??
-                "The AI returned nothing usable several times over. A free Gemini key has a daily limit; if that is it, this will work again tomorrow. /api/health?ping=1 says which models the key can reach.",
+              hint: why,
             });
             break;
           }
-          setNote("That batch came back empty. Trying again…");
+          setNote(`Nothing kept from that one \u2014 ${why} Trying again\u2026`);
           continue;
         }
 
@@ -213,4 +213,19 @@ export function PoolBuilder() {
       ) : null}
     </div>
   );
+}
+
+/** Why a request came back with nothing, in words rather than a zero. */
+function describe(result: Result): string {
+  if (result.lastError) return result.lastError;
+  if (result.reasons?.length) {
+    const worst = result.reasons
+      .map((r) => `${r.reason} (${r.count})`)
+      .join(", ");
+    return `the questions were written but discarded: ${worst}.`;
+  }
+  if (result.duplicates > 0) {
+    return `all ${result.duplicates} were questions already in the pool.`;
+  }
+  return "the AI returned nothing usable.";
 }

@@ -171,7 +171,7 @@ export interface GenerateOptions {
  */
 export async function generateQuestions(
   opts: GenerateOptions,
-): Promise<{ questions: ExamQuestion[]; rejected: string[] }> {
+): Promise<{ questions: ExamQuestion[]; rejected: string[]; returned: number }> {
   const d = domain(opts.domainId);
   if (!d) throw new Error(`Unknown domain ${opts.domainId}`);
 
@@ -197,7 +197,11 @@ export async function generateQuestions(
     {
       system: COMPTIA_STYLE,
       effort: "medium",
-      maxOutputTokens: 8_000,
+      // Thinking tokens come out of this budget, which is a lesson already
+      // learnt once on this project: too small a ceiling and the model spends
+      // it reasoning, then truncates the JSON mid-question and the whole
+      // batch is thrown away as unparseable.
+      maxOutputTokens: 16_000,
       timeoutMs: 120_000,
       prompt: `Write ${opts.count} practice questions for domain ${d.id} ${d.name}
 of CompTIA A+ Core 1 (220-1201).
@@ -241,7 +245,7 @@ ${material}`,
     else questions.push(q);
   }
 
-  return { questions, rejected };
+  return { questions, rejected, returned: (result.questions ?? []).length };
 }
 
 /**

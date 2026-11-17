@@ -8,7 +8,10 @@ import type { SourceLike } from "@/lib/ai/material";
 
 export const maxDuration = 300;
 
-const BATCH = 6;
+// Four rather than six. A batch is one structured answer, and a bigger one
+// is likelier to run past the model's output budget and come back as
+// unparseable JSON — which costs the whole batch, not the extra questions.
+const BATCH = 4;
 
 /**
  * Stop starting new batches at this point, so one already running still has
@@ -95,6 +98,10 @@ export async function POST(request: Request) {
     let saved = 0;
     let duplicates = 0;
     let rejected = 0;
+    // Why questions were thrown away, counted by reason. Without this a batch
+    // that generates fine and is then discarded looks exactly like a batch
+    // that never generated, and there is no way to tell from the outside.
+    const reasons = new Map<string, number>();
     let batches = 0;
     let consecutiveFailures = 0;
     let lastError: string | null = null;
@@ -152,6 +159,21 @@ export async function POST(request: Request) {
           batches += 1;
           consecutiveFailures = 0;
 
+          for (const note of result.rejected) {
+            const reason = note.split(":")[0];
+            reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+          }
+
+          console.log(
+            `[prep] ${item.domain} ${item.kind} rot=${item.rotation} ` +
+              `returned=${result.returned} kept=${result.questions.length} ` +
+              `saved=${written} dupes=${result.questions.length - written} ` +
+              `rejected=${result.rejected.length}`,
+          );
+          for (const note of result.rejected.slice(0, 4)) {
+            console.log(`[prep]   dropped - ${note}`);
+          }
+
           // Keep the no-repeats list current within the request too.
           recentStems.set(key, [
             ...result.questions.map((q) => q.stem),
@@ -161,6 +183,10 @@ export async function POST(request: Request) {
         } catch (cause) {
           attempt += 1;
           lastError = cause instanceof Error ? cause.message : String(cause);
+          console.log(
+            `[prep] ${item.domain} ${item.kind} rot=${item.rotation} FAILED ` +
+              `attempt=${attempt}: ${lastError}`,
+          );
           const status = (cause as { status?: number } | null)?.status;
 
           if (status === 429) {
@@ -197,6 +223,12 @@ export async function POST(request: Request) {
       // and the caller should keep them and come back for the rest.
       stalled: consecutiveFailures >= GIVE_UP_AFTER,
       throttled,
+      // Surfaced, not just counted: "18 written, 6 discarded for an unknown
+      // objective" is actionable; "0 saved" is not.
+      reasons: [...reasons.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 4)
+        .map(([reason, count]) => ({ reason, count })),
       lastError: saved === 0 || throttled ? lastError : null,
       elapsedMs: Date.now() - started,
     });
