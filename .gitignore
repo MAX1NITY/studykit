@@ -45,3 +45,8 @@ next-env.d.ts
 
 # markdown test build output
 /.markdown-test-build
+
+# Core 1 syllabus text. Personal study material, and this repo is public:
+# the chapters go into the database from the browser (the drop zone on
+# /prep), never through git.
+/content/core1/
