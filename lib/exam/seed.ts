@@ -36,7 +36,15 @@ export async function readSeedChapters(): Promise<SeedChapter[]> {
     index = JSON.parse(await readFile(path.join(dir, "index.json"), "utf8"));
   } catch {
     // No index: fall back to the filenames, which are ordered by prefix.
-    const files = (await readdir(dir)).filter((f) => f.endsWith(".txt")).sort();
+    // A missing directory is the normal case in a deployment — the chapters
+    // are gitignored — so it reads as "nothing to seed" rather than an error,
+    // and /prep offers the file drop instead.
+    let files: string[];
+    try {
+      files = (await readdir(dir)).filter((f) => f.endsWith(".txt")).sort();
+    } catch {
+      return [];
+    }
     index = files.map((file, i) => ({
       chapter: i + 1,
       title: file.replace(/^\d+-/, "").replace(/\.txt$/, "").replace(/-/g, " "),

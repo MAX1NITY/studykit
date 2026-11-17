@@ -21,9 +21,9 @@ export async function POST() {
     const chapters = await readSeedChapters();
     if (!chapters.length) {
       return fail(
-        "The Core 1 chapters are not available in this deployment.",
-        500,
-        "They should be in content/core1. Paste the chapters in instead, or redeploy.",
+        "The Core 1 chapters do not ship with this deployment.",
+        404,
+        "They are a textbook and this repository is public, so they are not in it. Use \u201cAdd chapters from files\u201d instead.",
       );
     }
 
